@@ -1,0 +1,14 @@
+export { parseHcl, parseTfFile, scanDirectory, extractArns, extractStringLiterals } from "./parser/hcl-parser.js";
+export { parseCrossplaneYaml, parseCrossplaneFile, scanCrossplaneDirectory } from "./parser/crossplane-parser.js";
+export { buildGraph, detectCycles, serializeGraph, toGraphviz, toGraphvizBefore, toGraphvizAfter, buildNodeId } from "./analyzer/dependency-graph.js";
+export { detectArns as detectArnReferences, classifyArnService, getUnresolvedArns, groupByService } from "./analyzer/arn-detector.js";
+export { classifyResource, classifyGraph } from "./analyzer/namespace-classifier.js";
+export { findCrossNamespaceEdges, groupCutsByNamespacePair } from "./planner/cut-finder.js";
+export { createMigrationPlan, generateMigrationSteps, generateShellScript, generateTfmigrateHcl } from "./planner/migration-planner.js";
+export { rewriteArns, arnToDataSource, arnToVariable, generateUnifiedDiff } from "./planner/code-rewriter.js";
+export { generateMarkdownReport } from "./reporter/markdown-reporter.js";
+export { gatekeeperModelConfig, classifyGatekeeperResource, gatekeeperModelReportTemplate } from "./presets/gatekeeper.js";
+export { parseStateJson, buildArnMap, enrichWithState } from "./state/state-reader.js";
+export { checkPrerequisites, dryRunMigration, generateRollback } from "./state/tfmigrate-executor.js";
+export { verifyMigration } from "./state/state-differ.js";
+export type * from "./types.js";

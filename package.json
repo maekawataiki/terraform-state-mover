@@ -1,0 +1,38 @@
+{
+  "name": "terraform-state-mover",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Analyze cross-repository Terraform HCL files, detect hardcoded ARN dependencies, and generate migration plans",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "tf-state-mover": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "tsc --noEmit",
+    "cli": "tsx src/cli.ts",
+    "demo:gatekeeper": "tsx src/cli.ts analyze examples/gatekeeper/infra-central examples/gatekeeper/service-app-api examples/gatekeeper/service-app-analytics examples/gatekeeper/infra-platform --preset gatekeeper --state-dir examples/gatekeeper/state -o output/gatekeeper",
+    "demo:terralith": "tsx src/cli.ts analyze examples/terralith/monolith -o output/terralith",
+    "demo:spaghetti": "tsx src/cli.ts analyze examples/spaghetti/network examples/spaghetti/platform examples/spaghetti/services --state-dir examples/spaghetti/state -o output/spaghetti",
+    "demo:cross-account": "tsx src/cli.ts analyze examples/cross-account/multi-account -o output/cross-account",
+    "demo:god-module": "tsx src/cli.ts analyze examples/god-module -o output/god-module",
+    "demo:env-copypasta": "tsx src/cli.ts analyze examples/env-copypasta/prod examples/env-copypasta/stg examples/env-copypasta/dev -o output/env-copypasta",
+    "demo:count-antipattern": "tsx src/cli.ts analyze examples/count-antipattern -o output/count-antipattern",
+    "demo:depends-on-module": "tsx src/cli.ts analyze examples/depends-on-module -o output/depends-on-module",
+    "demo": "pnpm demo:gatekeeper && pnpm demo:terralith && pnpm demo:spaghetti && pnpm demo:cross-account && pnpm demo:god-module && pnpm demo:env-copypasta && pnpm demo:count-antipattern && pnpm demo:depends-on-module && echo 'All demos generated in output/'"
+  },
+  "keywords": ["terraform", "migration", "arn", "dependency-graph"],
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "22.15.29",
+    "tsx": "4.19.4",
+    "typescript": "5.8.3",
+    "vitest": "3.2.3"
+  },
+  "dependencies": {
+    "commander": "13.1.0"
+  }
+}

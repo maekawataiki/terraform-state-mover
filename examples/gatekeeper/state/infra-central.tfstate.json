@@ -1,0 +1,30 @@
+{
+  "version": 4,
+  "resources": [
+    {
+      "type": "aws_iam_role",
+      "name": "app_api_lambda_exec",
+      "instances": [{"attributes": {"arn": "arn:aws:iam::111111111111:role/app-api-lambda-exec"}}]
+    },
+    {
+      "type": "aws_iam_role",
+      "name": "app_api_db_access",
+      "instances": [{"attributes": {"arn": "arn:aws:iam::111111111111:role/app-api-db-access"}}]
+    },
+    {
+      "type": "aws_iam_role",
+      "name": "app_analytics_s3_access",
+      "instances": [{"attributes": {"arn": "arn:aws:iam::111111111111:role/app-analytics-s3-access"}}]
+    },
+    {
+      "type": "aws_iam_role",
+      "name": "eks_cluster_role",
+      "instances": [{"attributes": {"arn": "arn:aws:iam::111111111111:role/eks-cluster-role"}}]
+    },
+    {
+      "type": "aws_iam_role",
+      "name": "events_processor_role",
+      "instances": [{"attributes": {"arn": "arn:aws:iam::111111111111:role/events-processor-role"}}]
+    }
+  ]
+}

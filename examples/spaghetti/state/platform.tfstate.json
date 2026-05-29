@@ -1,0 +1,20 @@
+{
+  "version": 4,
+  "resources": [
+    {
+      "type": "aws_iam_role",
+      "name": "eks_cluster",
+      "instances": [{"attributes": {"arn": "arn:aws:iam::111111111111:role/platform-eks-cluster-role"}}]
+    },
+    {
+      "type": "aws_iam_role",
+      "name": "service_deployer",
+      "instances": [{"attributes": {"arn": "arn:aws:iam::111111111111:role/platform-service-deployer"}}]
+    },
+    {
+      "type": "aws_iam_role",
+      "name": "lambda_base",
+      "instances": [{"attributes": {"arn": "arn:aws:iam::111111111111:role/platform-lambda-base-role"}}]
+    }
+  ]
+}
