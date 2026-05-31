@@ -1,39 +1,156 @@
-import type { DependencyGraph, CutEdge, MigrationStep, MigrationPlan, NamespaceConfig } from "../types.js";
+import type { DependencyGraph, CutEdge, MigrationStep, MigrationPlan, NamespaceConfig, GraphNode } from "../types.js";
+import type { StateFile } from "../state/state-reader.js";
 import { findCrossNamespaceEdges } from "./cut-finder.js";
 
-export function generateMigrationSteps(graph: DependencyGraph, cutEdges: CutEdge[]): MigrationStep[] {
-  const steps: MigrationStep[] = [];
+export interface MigrationPlanOptions {
+  config?: NamespaceConfig;
+  stateFiles?: StateFile[];
+}
 
+/**
+ * Topological sort of nodes that need to be moved.
+ * Returns nodes in dependency order: move leaves first (nodes with no outgoing edges to other moved nodes).
+ */
+export function topologicalSort(graph: DependencyGraph, nodeIds: string[]): string[] {
+  const moveSet = new Set(nodeIds);
+
+  // Build adjacency list restricted to moved nodes
+  const adj = new Map<string, string[]>();
+  const inDegree = new Map<string, number>();
+  for (const id of moveSet) {
+    adj.set(id, []);
+    inDegree.set(id, 0);
+  }
+
+  for (const edge of graph.edges) {
+    // Only count edges between moved nodes
+    if (moveSet.has(edge.from) && moveSet.has(edge.to)) {
+      adj.get(edge.from)!.push(edge.to);
+      inDegree.set(edge.to, (inDegree.get(edge.to) || 0) + 1);
+    }
+  }
+
+  // Kahn's algorithm
+  const queue: string[] = [];
+  for (const [id, degree] of inDegree) {
+    if (degree === 0) queue.push(id);
+  }
+
+  const sorted: string[] = [];
+  while (queue.length > 0) {
+    const node = queue.shift()!;
+    sorted.push(node);
+    for (const neighbor of adj.get(node) || []) {
+      const newDegree = (inDegree.get(neighbor) || 1) - 1;
+      inDegree.set(neighbor, newDegree);
+      if (newDegree === 0) queue.push(neighbor);
+    }
+  }
+
+  // If cycle detected, append remaining (shouldn't happen with DAG)
+  for (const id of moveSet) {
+    if (!sorted.includes(id)) sorted.push(id);
+  }
+
+  // Reverse: move dependents last (dependencies moved first)
+  return sorted.reverse();
+}
+
+/**
+ * Build a map from resource address to its ID/ARN from state files.
+ * Key format: "repo:resource_type.resource_name"
+ */
+export function buildResourceIdMap(stateFiles: StateFile[]): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const sf of stateFiles) {
+    for (const r of sf.resources) {
+      const key = `${sf.repo}:${r.address}`;
+      // Prefer ARN over ID for import
+      const id = r.arn || (r.attributes.id as string | undefined);
+      if (id) {
+        map.set(key, id);
+      }
+    }
+  }
+  return map;
+}
+
+/**
+ * Resolve the resource ID for a terraform import command.
+ * Falls back to <RESOURCE_ID> placeholder if state is not available.
+ */
+function resolveResourceId(node: GraphNode, resourceIdMap: Map<string, string>): string {
+  const key = `${node.repo}:${node.resourceType}.${node.name}`;
+  return resourceIdMap.get(key) || "<RESOURCE_ID>";
+}
+
+export function generateMigrationSteps(
+  graph: DependencyGraph,
+  cutEdges: CutEdge[],
+  opts?: { stateFiles?: StateFile[] },
+): MigrationStep[] {
+  const steps: MigrationStep[] = [];
+  const resourceIdMap = opts?.stateFiles ? buildResourceIdMap(opts.stateFiles) : new Map<string, string>();
+
+  // Collect unique resources that need to be moved
+  // The "from" node of each cut edge is what gets moved to toNamespace
+  const movedResources = new Map<string, { node: GraphNode; targetNamespace: string }>();
   for (const cut of cutEdges) {
     const fromNode = graph.nodes.get(cut.edge.from);
-    const toNode = graph.nodes.get(cut.edge.to);
-    if (!fromNode || !toNode) continue;
+    if (!fromNode) continue;
+    // Dedup: same resource only moved once
+    if (!movedResources.has(cut.edge.from)) {
+      movedResources.set(cut.edge.from, { node: fromNode, targetNamespace: cut.toNamespace });
+    }
+  }
 
-    // The resource to move: the "from" node should move to the "toNamespace"
-    // because the edge crosses namespaces and the resource belongs in the target namespace
+  // Topological sort for correct ordering
+  const sortedIds = topologicalSort(graph, [...movedResources.keys()]);
+
+  // Generate state_mv steps in dependency order
+  for (const id of sortedIds) {
+    const entry = movedResources.get(id);
+    if (!entry) continue;
+    const { node, targetNamespace } = entry;
+
     steps.push({
       type: "state_mv",
-      command: `terraform state mv -state=${fromNode.repo}/terraform.tfstate -state-out=${cut.toNamespace}/terraform.tfstate '${fromNode.resourceType}.${fromNode.name}' '${fromNode.resourceType}.${fromNode.name}'`,
-      description: `Move ${fromNode.resourceType}.${fromNode.name} from ${fromNode.repo} to ${cut.toNamespace}`,
-      resource: `${fromNode.resourceType}.${fromNode.name}`,
-      targetRepo: cut.toNamespace,
+      command: `terraform state mv -state=${node.repo}/terraform.tfstate -state-out=${targetNamespace}/terraform.tfstate '${node.resourceType}.${node.name}' '${node.resourceType}.${node.name}'`,
+      description: `Move ${node.resourceType}.${node.name} from ${node.repo} to ${targetNamespace}`,
+      resource: `${node.resourceType}.${node.name}`,
+      targetRepo: targetNamespace,
     });
+  }
 
-    // Import command for target
+  // Generate import steps for target resources (the "to" side of cut edges)
+  const importedResources = new Set<string>();
+  for (const cut of cutEdges) {
+    const toNode = graph.nodes.get(cut.edge.to);
+    if (!toNode) continue;
+    // Dedup imports
+    if (importedResources.has(cut.edge.to)) continue;
+    importedResources.add(cut.edge.to);
+
+    const resourceId = resolveResourceId(toNode, resourceIdMap);
     steps.push({
       type: "import",
-      command: `terraform import '${toNode.resourceType}.${toNode.name}' <RESOURCE_ID>`,
+      command: `terraform import '${toNode.resourceType}.${toNode.name}' '${resourceId}'`,
       description: `Import ${toNode.resourceType}.${toNode.name} into ${cut.toNamespace} state`,
       resource: `${toNode.resourceType}.${toNode.name}`,
       targetRepo: cut.toNamespace,
     });
+  }
 
-    // Code rewrite step
-    if (cut.edge.type === "arn") {
+  // Code rewrite steps for ARN edges
+  const rewrittenArns = new Set<string>();
+  for (const cut of cutEdges) {
+    if (cut.edge.type === "arn" && cut.edge.label && !rewrittenArns.has(cut.edge.label)) {
+      rewrittenArns.add(cut.edge.label);
+      const fromNode = graph.nodes.get(cut.edge.from);
       steps.push({
         type: "code_rewrite",
         description: `Replace hardcoded ARN "${cut.edge.label}" with data source or variable reference`,
-        resource: `${fromNode.resourceType}.${fromNode.name}`,
+        resource: fromNode ? `${fromNode.resourceType}.${fromNode.name}` : undefined,
       });
     }
   }
@@ -107,9 +224,9 @@ ${actionsStr}
   return blocks.join("\n\n") + "\n";
 }
 
-export function createMigrationPlan(graph: DependencyGraph, config?: NamespaceConfig): MigrationPlan {
+export function createMigrationPlan(graph: DependencyGraph, config?: NamespaceConfig, stateFiles?: StateFile[]): MigrationPlan {
   const crossNamespaceEdges = findCrossNamespaceEdges(graph, config);
-  const steps = generateMigrationSteps(graph, crossNamespaceEdges);
+  const steps = generateMigrationSteps(graph, crossNamespaceEdges, { stateFiles });
   const shellScript = generateShellScript(steps);
   const json = JSON.stringify({ steps, crossNamespaceEdges }, null, 2);
   const tfmigrateHcl = generateTfmigrateHcl(graph, crossNamespaceEdges);

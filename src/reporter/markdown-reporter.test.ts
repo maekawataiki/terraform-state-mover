@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { generateMarkdownReport } from "../../../src/reporter/markdown-reporter.js";
-import type { DependencyGraph, ArnReference, MigrationPlan, GraphNode, GraphEdge, ParsedFile } from "../../../src/types.js";
+import { generateMarkdownReport } from "./markdown-reporter.js";
+import type { DependencyGraph, ArnReference, MigrationPlan, GraphNode, GraphEdge, ParsedFile } from "../types.js";
 
 function createTestGraph(): DependencyGraph {
   const nodes = new Map<string, GraphNode>([
@@ -326,5 +326,126 @@ describe("MarkdownReporter", () => {
     const report = generateMarkdownReport({ graph, arnRefs: [], plan });
     expect(report).toContain("Circular Remote State");
     expect(report).toContain("remote_state");
+  });
+});
+
+describe("Report output stability (snapshot)", () => {
+  it("generates stable output for gatekeeper scenario", () => {
+    const nodes = new Map<string, GraphNode>([
+      ["infra-central:resource.aws_organizations_policy.deny_iam", {
+        id: "infra-central:resource.aws_organizations_policy.deny_iam", type: "resource",
+        resourceType: "aws_organizations_policy", name: "deny_iam", repo: "infra-central", filePath: "scp.tf",
+      }],
+      ["infra-central:resource.aws_iam_policy.boundary", {
+        id: "infra-central:resource.aws_iam_policy.boundary", type: "resource",
+        resourceType: "aws_iam_policy", name: "boundary", repo: "infra-central", filePath: "boundary.tf",
+      }],
+      ["infra-central:resource.aws_iam_role.api_lambda_exec", {
+        id: "infra-central:resource.aws_iam_role.api_lambda_exec", type: "resource",
+        resourceType: "aws_iam_role", name: "api_lambda_exec", repo: "infra-central", filePath: "roles.tf",
+      }],
+      ["service-api:resource.aws_lambda_function.handler", {
+        id: "service-api:resource.aws_lambda_function.handler", type: "resource",
+        resourceType: "aws_lambda_function", name: "handler", repo: "service-api", filePath: "main.tf",
+      }],
+      ["infra-platform:resource.aws_vpc.main", {
+        id: "infra-platform:resource.aws_vpc.main", type: "resource",
+        resourceType: "aws_vpc", name: "main", repo: "infra-platform", filePath: "vpc.tf",
+      }],
+      ["infra-platform:resource.aws_eks_cluster.prod", {
+        id: "infra-platform:resource.aws_eks_cluster.prod", type: "resource",
+        resourceType: "aws_eks_cluster", name: "prod", repo: "infra-platform", filePath: "eks.tf",
+      }],
+    ]);
+    const edges: GraphEdge[] = [
+      { from: "service-api:resource.aws_lambda_function.handler", to: "infra-central:resource.aws_iam_role.api_lambda_exec", type: "arn", label: "arn:aws:iam::123:role/api-lambda-exec" },
+    ];
+    const graph: DependencyGraph = { nodes, edges };
+    const arnRefs: ArnReference[] = [{
+      arn: "arn:aws:iam::123:role/api-lambda-exec",
+      service: "iam",
+      filePath: "main.tf",
+      repo: "service-api",
+      resolved: true,
+      definingResource: nodes.get("infra-central:resource.aws_iam_role.api_lambda_exec"),
+    }];
+    const plan = createTestPlan();
+
+    const report = generateMarkdownReport({ graph, arnRefs, plan });
+
+    // Structure assertions (stable across minor changes)
+    expect(report).toMatchSnapshot();
+  });
+
+  it("generates stable output for terralith scenario (single repo)", () => {
+    const resourceTypes = [
+      "aws_vpc", "aws_subnet", "aws_internet_gateway", "aws_nat_gateway",
+      "aws_lambda_function", "aws_lambda_function", "aws_lambda_function",
+      "aws_s3_bucket", "aws_s3_bucket", "aws_db_instance",
+      "aws_sqs_queue", "aws_sns_topic", "aws_dynamodb_table",
+      "aws_ecs_cluster", "aws_ecs_service", "aws_ecs_task_definition",
+    ];
+    const names = [
+      "main", "public", "igw", "nat",
+      "api", "worker", "cron",
+      "data", "logs", "orders",
+      "events", "alerts", "sessions",
+      "cluster", "web", "web_task",
+    ];
+    const nodes = new Map<string, GraphNode>();
+    for (let i = 0; i < resourceTypes.length; i++) {
+      const id = `monolith:resource.${resourceTypes[i]}.${names[i]}`;
+      nodes.set(id, {
+        id, type: "resource", resourceType: resourceTypes[i], name: names[i],
+        repo: "monolith", filePath: "main.tf",
+      });
+    }
+    const edges: GraphEdge[] = [
+      { from: "monolith:resource.aws_lambda_function.api", to: "monolith:resource.aws_vpc.main", type: "reference" },
+      { from: "monolith:resource.aws_lambda_function.worker", to: "monolith:resource.aws_sqs_queue.events", type: "reference" },
+    ];
+    const graph: DependencyGraph = { nodes, edges };
+    const plan: MigrationPlan = {
+      steps: [{ type: "verify", command: "terraform plan", description: "Verify" }],
+      crossNamespaceEdges: [],
+      shellScript: "#!/bin/bash\n",
+      json: "{}",
+      tfmigrateHcl: "",
+    };
+
+    const report = generateMarkdownReport({ graph, arnRefs: [], plan });
+
+    expect(report).toContain("Terralith");
+    expect(report).toContain("monolith");
+    expect(report).toMatchSnapshot();
+  });
+
+  it("generates stable output for clean infrastructure (no issues)", () => {
+    const nodes = new Map<string, GraphNode>([
+      ["infra:resource.aws_vpc.main", {
+        id: "infra:resource.aws_vpc.main", type: "resource",
+        resourceType: "aws_vpc", name: "main", repo: "infra", filePath: "vpc.tf",
+      }],
+      ["infra:resource.aws_subnet.public", {
+        id: "infra:resource.aws_subnet.public", type: "resource",
+        resourceType: "aws_subnet", name: "public", repo: "infra", filePath: "vpc.tf",
+      }],
+    ]);
+    const edges: GraphEdge[] = [
+      { from: "infra:resource.aws_subnet.public", to: "infra:resource.aws_vpc.main", type: "reference" },
+    ];
+    const graph: DependencyGraph = { nodes, edges };
+    const plan: MigrationPlan = {
+      steps: [{ type: "verify", command: "terraform plan", description: "Verify" }],
+      crossNamespaceEdges: [],
+      shellScript: "#!/bin/bash\n",
+      json: "{}",
+      tfmigrateHcl: "",
+    };
+
+    const report = generateMarkdownReport({ graph, arnRefs: [], plan });
+
+    expect(report).toContain("No anti-patterns detected");
+    expect(report).toMatchSnapshot();
   });
 });

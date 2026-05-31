@@ -1,18 +1,21 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtemp, rm, writeFile, mkdir } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { parseCrossplaneYaml, parseCrossplaneFile, scanCrossplaneDirectory } from "../../../src/parser/crossplane-parser.js";
+import { setupTestDirectory } from "../test-utils/test-directories.js";
+import { parseCrossplaneYaml, parseCrossplaneFile, scanCrossplaneDirectory } from "./crossplane-parser.js";
 
 describe("CrossplaneParser", () => {
   let testDir: string;
+  let cleanup: () => Promise<void>;
 
   beforeEach(async () => {
-    testDir = await mkdtemp(join(tmpdir(), "tf-crossplane-test-"));
+    ({ testDir, cleanup } = await setupTestDirectory());
+    vi.spyOn(process, "cwd").mockReturnValue(testDir);
   });
 
   afterEach(async () => {
-    await rm(testDir, { recursive: true, force: true });
+    await cleanup();
+    vi.restoreAllMocks();
   });
 
   const compositionYaml = `apiVersion: apiextensions.crossplane.io/v1

@@ -1,0 +1,35 @@
+{
+  "version": 4,
+  "resources": [
+    {
+      "type": "aws_iam_role",
+      "name": "order_service_lambda",
+      "instances": [{ "attributes": { "arn": "arn:aws:iam::111111111111:role/order-service-lambda", "name": "order-service-lambda" } }]
+    },
+    {
+      "type": "aws_iam_role",
+      "name": "payment_service_lambda",
+      "instances": [{ "attributes": { "arn": "arn:aws:iam::111111111111:role/payment-service-lambda", "name": "payment-service-lambda" } }]
+    },
+    {
+      "type": "aws_iam_role",
+      "name": "notification_service_lambda",
+      "instances": [{ "attributes": { "arn": "arn:aws:iam::111111111111:role/notification-service-lambda", "name": "notification-service-lambda" } }]
+    },
+    {
+      "type": "aws_iam_role",
+      "name": "analytics_service_lambda",
+      "instances": [{ "attributes": { "arn": "arn:aws:iam::111111111111:role/analytics-service-lambda", "name": "analytics-service-lambda" } }]
+    },
+    {
+      "type": "aws_iam_role",
+      "name": "search_service_lambda",
+      "instances": [{ "attributes": { "arn": "arn:aws:iam::111111111111:role/search-service-lambda", "name": "search-service-lambda" } }]
+    },
+    {
+      "type": "aws_iam_role",
+      "name": "auth_service_lambda",
+      "instances": [{ "attributes": { "arn": "arn:aws:iam::111111111111:role/auth-service-lambda", "name": "auth-service-lambda" } }]
+    }
+  ]
+}

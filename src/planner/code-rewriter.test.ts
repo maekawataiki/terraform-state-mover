@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { rewriteArns, arnToDataSource, arnToVariable, generateUnifiedDiff } from "../../../src/planner/code-rewriter.js";
-import type { ArnReference } from "../../../src/types.js";
+import { rewriteArns, arnToDataSource, arnToVariable, generateUnifiedDiff } from "./code-rewriter.js";
+import type { ArnReference } from "../types.js";
 
 describe("code-rewriter", () => {
   describe("arnToDataSource", () => {

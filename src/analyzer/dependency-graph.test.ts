@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { buildGraph, detectCycles, serializeGraph, toGraphviz, buildNodeId } from "../../../src/analyzer/dependency-graph.js";
-import type { ParsedFile } from "../../../src/types.js";
+import { buildGraph, detectCycles, serializeGraph, toGraphviz, buildNodeId } from "./dependency-graph.js";
+import type { ParsedFile } from "../types.js";
 
 function makeParsedFile(blocks: Array<{ type: "resource" | "data"; resourceType: string; name: string; body: string; arns?: string[] }>, repo = "repo1"): ParsedFile {
   return {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { verifyMigration } from "../../../src/state/state-differ.js";
+import { verifyMigration } from "./state-differ.js";
 
 describe("state-differ", () => {
   const targetState = JSON.stringify({

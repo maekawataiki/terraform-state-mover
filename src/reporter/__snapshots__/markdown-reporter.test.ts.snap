@@ -1,0 +1,233 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`Report output stability (snapshot) > generates stable output for clean infrastructure (no issues) 1`] = `
+"# Migration Analysis Report
+
+## Diagnosis
+
+✅ No anti-patterns detected. Infrastructure is well-structured.
+
+## Summary
+
+| Metric | Value |
+| --- | --- |
+| Resources | 2 |
+| Repositories | 1 |
+| Edges | 1 |
+| ARN references | 0 |
+| Cross-namespace edges | 0 |
+| Cycles | 0 |
+
+## State Split Plan
+
+| Target State | Resources | Change Frequency |
+| --- | --- | --- |
+| platform | 2 | Low (monthly) |
+
+## Before
+
+\`\`\`mermaid
+graph LR
+  platform["platform<br/>2 resources"]
+\`\`\`
+
+## After
+
+\`\`\`mermaid
+graph LR
+  platform["platform<br/>2 resources"]
+\`\`\`
+
+## Migration Steps
+
+- State moves: 0
+- Imports: 0
+- Code rewrites: 0
+- Verification: terraform plan (expect no changes)
+
+## Recommended Order (lowest dependency first)
+
+| # | Resource | Current Repo | Dependencies |
+| --- | --- | --- | --- |
+| 1 | aws_subnet.public | infra | 0 |
+| 2 | aws_vpc.main | infra | 1 |
+"
+`;
+
+exports[`Report output stability (snapshot) > generates stable output for gatekeeper scenario 1`] = `
+"# Migration Analysis Report
+
+## Diagnosis
+
+### Detected Anti-Patterns
+
+🟡 **Spaghetti State** — 1 hardcoded ARN references cross repo boundaries. Staging reproduction impossible.
+
+  - service-api → \`role/api-lambda-exec\`
+
+### Impact
+
+- **Staging reproduction**: Impossible (1 account-specific ARNs hardcoded)
+
+### After Migration
+
+| Metric | Before | After |
+| --- | --- | --- |
+| Independent states | 3 | 4 |
+| Max blast radius | 6 | 2 |
+| Avg resources per state | 2.0 | 1.5 |
+| Cross-state hardcoded ARNs | 1 | 0 (replaced with var/output) |
+
+## Summary
+
+| Metric | Value |
+| --- | --- |
+| Resources | 6 |
+| Repositories | 3 |
+| Edges | 1 |
+| ARN references | 1 |
+| Cross-namespace edges | 1 |
+| Cycles | 0 |
+
+## State Split Plan
+
+| Target State | Resources | Change Frequency |
+| --- | --- | --- |
+| foundation | 2 | Rare (yearly) |
+| platform | 2 | Low (monthly) |
+| service-api | 1 | High (daily) |
+| service-infra-central | 1 | High (daily) |
+
+## Hardcoded ARN Dependencies (to resolve)
+
+| Consumer | Producer | ARN |
+| --- | --- | --- |
+| service-api | infra-central | \`arn:aws:iam::123:role/api-lambda-exec\` |
+
+## Before
+
+\`\`\`mermaid
+graph LR
+  foundation["foundation<br/>2 resources"]
+  platform["platform<br/>2 resources"]
+  service_api["service-api<br/>1 resources"]
+  service_infra_central["service-infra-central<br/>1 resources"]
+  service_api -. "⚠ 1 hardcoded ARN" .-> service_infra_central
+\`\`\`
+
+## After
+
+\`\`\`mermaid
+graph LR
+  foundation["foundation<br/>2 resources"]
+  platform["platform<br/>2 resources"]
+  service_api["service-api<br/>1 resources"]
+  service_infra_central["service-infra-central<br/>1 resources"]
+  service_api --> |"1 var/output"| service_infra_central
+\`\`\`
+
+## Migration Steps
+
+- State moves: 1
+- Imports: 0
+- Code rewrites: 1
+- Verification: terraform plan (expect no changes)
+
+## Recommended Order (lowest dependency first)
+
+| # | Resource | Current Repo | Dependencies |
+| --- | --- | --- | --- |
+| 1 | aws_organizations_policy.deny_iam | infra-central | 0 |
+| 2 | aws_iam_policy.boundary | infra-central | 0 |
+| 3 | aws_lambda_function.handler | service-api | 0 |
+| 4 | aws_vpc.main | infra-platform | 0 |
+| 5 | aws_eks_cluster.prod | infra-platform | 0 |
+| 6 | aws_iam_role.api_lambda_exec | infra-central | 1 |
+"
+`;
+
+exports[`Report output stability (snapshot) > generates stable output for terralith scenario (single repo) 1`] = `
+"# Migration Analysis Report
+
+## Diagnosis
+
+### Detected Anti-Patterns
+
+🟡 **Terralith** — \`monolith\` contains 16 resources spanning 2 namespaces in a single state.
+
+  - Resources: 16
+  - Namespaces: 2
+  - Blast radius: all 16 resources on any change
+
+### Impact
+
+- **Blast radius**: 16 resources in \`monolith\` (any change triggers full plan)
+
+### After Migration
+
+| Metric | Before | After |
+| --- | --- | --- |
+| Independent states | 1 | 2 |
+| Max blast radius | 16 | 11 |
+| Avg resources per state | 16.0 | 8.0 |
+| Cross-state hardcoded ARNs | 0 | 0 (replaced with var/output) |
+
+## Summary
+
+| Metric | Value |
+| --- | --- |
+| Resources | 16 |
+| Repositories | 1 |
+| Edges | 2 |
+| ARN references | 0 |
+| Cross-namespace edges | 0 |
+| Cycles | 0 |
+
+## State Split Plan
+
+| Target State | Resources | Change Frequency |
+| --- | --- | --- |
+| platform | 5 | Low (monthly) |
+| service-monolith | 11 | High (daily) |
+
+## Before
+
+\`\`\`mermaid
+graph LR
+  platform["platform<br/>5 resources"]
+  service_monolith["service-monolith<br/>11 resources"]
+  service_monolith --> |"1 refs"| platform
+\`\`\`
+
+## After
+
+\`\`\`mermaid
+graph LR
+  platform["platform<br/>5 resources"]
+  service_monolith["service-monolith<br/>11 resources"]
+  service_monolith --> |"1 var/output"| platform
+\`\`\`
+
+## Migration Steps
+
+- State moves: 0
+- Imports: 0
+- Code rewrites: 0
+- Verification: terraform plan (expect no changes)
+
+## Recommended Order (lowest dependency first)
+
+| # | Resource | Current Repo | Dependencies |
+| --- | --- | --- | --- |
+| 1 | aws_subnet.public | monolith | 0 |
+| 2 | aws_internet_gateway.igw | monolith | 0 |
+| 3 | aws_nat_gateway.nat | monolith | 0 |
+| 4 | aws_lambda_function.api | monolith | 0 |
+| 5 | aws_lambda_function.worker | monolith | 0 |
+| 6 | aws_lambda_function.cron | monolith | 0 |
+| 7 | aws_s3_bucket.data | monolith | 0 |
+| 8 | aws_s3_bucket.logs | monolith | 0 |
+| 9 | aws_db_instance.orders | monolith | 0 |
+| 10 | aws_sns_topic.alerts | monolith | 0 |
+"
+`;

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { gatekeeperModelConfig, classifyGatekeeperResource, gatekeeperModelReportTemplate } from "../../../src/presets/gatekeeper.js";
-import type { GraphNode } from "../../../src/types.js";
+import { gatekeeperModelConfig, classifyGatekeeperResource, gatekeeperModelReportTemplate } from "./gatekeeper.js";
+import type { GraphNode } from "../types.js";
 
 describe("Gatekeeper Model Preset", () => {
   describe("gatekeeperModelConfig", () => {
@@ -63,7 +63,7 @@ describe("Gatekeeper Model Preset", () => {
         type: "resource", resourceType: "aws_iam_role",
         name: "app_api_rds_access", repo: "infra-central", filePath: "iam/roles.tf",
       };
-      expect(classifyGatekeeperResource(node)).toBe("service-app_api");
+      expect(classifyGatekeeperResource(node)).toBe("service-app-api");
     });
 
     it("classifies analytics roles to service-app namespace", () => {
@@ -72,7 +72,7 @@ describe("Gatekeeper Model Preset", () => {
         type: "resource", resourceType: "aws_iam_role",
         name: "app_analytics_s3_access", repo: "infra-central", filePath: "iam/roles.tf",
       };
-      expect(classifyGatekeeperResource(node)).toBe("service-app_analytics");
+      expect(classifyGatekeeperResource(node)).toBe("service-app-analytics");
     });
 
     it("classifies central repo roles by naming convention", () => {

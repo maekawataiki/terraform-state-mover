@@ -10,6 +10,8 @@ import { generateMarkdownReport } from "./reporter/markdown-reporter.js";
 import { gatekeeperModelConfig, gatekeeperModelReportTemplate } from "./presets/gatekeeper.js";
 import { parseStateJson, enrichWithState } from "./state/state-reader.js";
 import { checkPrerequisites, dryRunMigration } from "./state/tfmigrate-executor.js";
+import { CliError, formatError, validatePreset, validateDirectory, validateFile, parseJson } from "./utils/error.js";
+import { logger } from "./utils/logger.js";
 import type { NamespaceConfig, ParsedFile, SerializedGraph, ArnReference, MigrationPlan } from "./types.js";
 
 const program = new Command();
@@ -22,6 +24,32 @@ program
   .option("--dry-run", "Dry run mode")
   .option("-v, --verbose", "Verbose output");
 
+function resolvePresetConfig(presetName: string | undefined): { config?: NamespaceConfig; templateSuffix?: string } {
+  if (!presetName) return {};
+  const preset = validatePreset(presetName);
+  switch (preset) {
+    case "gatekeeper":
+      return { config: gatekeeperModelConfig, templateSuffix: gatekeeperModelReportTemplate };
+  }
+}
+
+async function loadStateDir(dir: string) {
+  await validateDirectory(dir);
+  const entries = await readdir(dir);
+  const stateFiles = [];
+  for (const entry of entries) {
+    if (entry.endsWith(".tfstate.json")) {
+      const filePath = join(dir, entry);
+      const repo = entry.replace(".tfstate.json", "");
+      const content = await readFile(filePath, "utf-8");
+      // Validate JSON before passing to parser
+      parseJson(content, filePath);
+      stateFiles.push(parseStateJson(content, repo));
+    }
+  }
+  return stateFiles;
+}
+
 program
   .command("analyze")
   .description("Scan repos and output dependency report")
@@ -31,6 +59,13 @@ program
   .option("--state-dir <dir>", "Directory containing <repo-name>.tfstate.json files")
   .action(async (paths: string[], cmdOpts) => {
     const opts = program.opts();
+
+    // Validate inputs
+    for (const p of paths) {
+      await validateDirectory(p);
+    }
+    const { config: nsConfig, templateSuffix } = resolvePresetConfig(cmdOpts.preset);
+
     let parsedFiles: ParsedFile[] = [];
     for (const p of paths) {
       parsedFiles.push(...await scanDirectory(p));
@@ -39,14 +74,10 @@ program
       }
     }
 
+    let stateFiles: Awaited<ReturnType<typeof loadStateDir>> | undefined;
     if (cmdOpts.stateDir) {
-      const stateFiles = await loadStateDir(cmdOpts.stateDir);
+      stateFiles = await loadStateDir(cmdOpts.stateDir);
       parsedFiles = enrichWithState(parsedFiles, stateFiles);
-    }
-
-    let nsConfig: NamespaceConfig | undefined;
-    if (cmdOpts.preset === "gatekeeper") {
-      nsConfig = gatekeeperModelConfig;
     }
 
     const graph = buildGraph(parsedFiles);
@@ -54,31 +85,30 @@ program
     const byService = groupByService(arns);
     const unresolved = getUnresolvedArns(arns);
 
-    console.log(`\n=== Dependency Analysis ===`);
-    console.log(`Resources: ${graph.nodes.size}`);
-    console.log(`Edges: ${graph.edges.length}`);
-    console.log(`ARN references: ${arns.length}`);
-    console.log(`Unresolved ARNs: ${unresolved.length}`);
-    console.log(`\nARNs by service:`);
+    logger.log(`\n=== Dependency Analysis ===`);
+    logger.log(`Resources: ${graph.nodes.size}`);
+    logger.log(`Edges: ${graph.edges.length}`);
+    logger.log(`ARN references: ${arns.length}`);
+    logger.log(`Unresolved ARNs: ${unresolved.length}`);
+    logger.log(`\nARNs by service:`);
     for (const [service, refs] of byService) {
-      console.log(`  ${service}: ${refs.length}`);
+      logger.log(`  ${service}: ${refs.length}`);
     }
 
     if (opts.outputDir) {
       await mkdir(opts.outputDir, { recursive: true });
       await writeFile(join(opts.outputDir, "graph.json"), JSON.stringify(serializeGraph(graph), null, 2));
-      console.log(`\nGraph written to ${join(opts.outputDir, "graph.json")}`);
+      logger.log(`\nGraph written to ${join(opts.outputDir, "graph.json")}`);
 
       const vizOpts = { config: nsConfig };
       await writeFile(join(opts.outputDir, "graph-before.dot"), toGraphvizBefore(graph, vizOpts));
       await writeFile(join(opts.outputDir, "graph-after.dot"), toGraphvizAfter(graph, vizOpts));
-      console.log(`Graphs written to ${join(opts.outputDir, "graph-before.dot")}, graph-after.dot`);
+      logger.log(`Graphs written to ${join(opts.outputDir, "graph-before.dot")}, graph-after.dot`);
 
-      const plan = createMigrationPlan(graph, nsConfig);
-      const templateSuffix = cmdOpts.preset === "gatekeeper" ? gatekeeperModelReportTemplate : undefined;
+      const plan = createMigrationPlan(graph, nsConfig, stateFiles);
       const report = generateMarkdownReport({ graph, arnRefs: arns, plan, config: nsConfig, templateSuffix, parsedFiles });
       await writeFile(join(opts.outputDir, "report.md"), report);
-      console.log(`Report written to ${join(opts.outputDir, "report.md")}`);
+      logger.log(`Report written to ${join(opts.outputDir, "report.md")}`);
     }
   });
 
@@ -90,6 +120,12 @@ program
   .option("--state-dir <dir>", "Directory containing <repo-name>.tfstate.json files")
   .action(async (paths: string[], cmdOpts) => {
     const opts = program.opts();
+
+    // Validate inputs
+    for (const p of paths) {
+      await validateDirectory(p);
+    }
+
     let parsedFiles: ParsedFile[] = [];
     for (const p of paths) {
       parsedFiles.push(...await scanDirectory(p));
@@ -97,30 +133,32 @@ program
 
     let nsConfig: NamespaceConfig | undefined;
     if (cmdOpts.namespaces) {
+      await validateFile(cmdOpts.namespaces);
       const content = await readFile(cmdOpts.namespaces, "utf-8");
-      nsConfig = JSON.parse(content);
+      nsConfig = parseJson<NamespaceConfig>(content, cmdOpts.namespaces);
     }
 
+    let stateFiles: Awaited<ReturnType<typeof loadStateDir>> | undefined;
     if (cmdOpts.stateDir) {
-      const stateFiles = await loadStateDir(cmdOpts.stateDir);
+      stateFiles = await loadStateDir(cmdOpts.stateDir);
       parsedFiles = enrichWithState(parsedFiles, stateFiles);
     }
 
     const graph = buildGraph(parsedFiles);
-    const plan = createMigrationPlan(graph, nsConfig);
+    const plan = createMigrationPlan(graph, nsConfig, stateFiles);
 
-    console.log(`\n=== Migration Plan ===`);
-    console.log(`Steps: ${plan.steps.length}`);
-    console.log(`Cross-namespace edges: ${plan.crossNamespaceEdges.length}`);
+    logger.log(`\n=== Migration Plan ===`);
+    logger.log(`Steps: ${plan.steps.length}`);
+    logger.log(`Cross-namespace edges: ${plan.crossNamespaceEdges.length}`);
 
     if (opts.outputDir && !opts.dryRun) {
       await mkdir(opts.outputDir, { recursive: true });
       await writeFile(join(opts.outputDir, "plan.json"), plan.json);
       await writeFile(join(opts.outputDir, "migrate.sh"), plan.shellScript, { mode: 0o755 });
       await writeFile(join(opts.outputDir, "migrate.hcl"), plan.tfmigrateHcl);
-      console.log(`\nPlan written to ${opts.outputDir}/`);
+      logger.log(`\nPlan written to ${opts.outputDir}/`);
     } else {
-      console.log(plan.shellScript);
+      logger.log(plan.shellScript);
     }
   });
 
@@ -133,24 +171,22 @@ program
     const opts = program.opts();
     const workingDir = opts.outputDir || ".";
 
+    await validateFile(hclFile);
+
     const prereqs = await checkPrerequisites({ dryRun: true, workingDir, tfBinary: cmdOpts.tfBinary });
     if (!prereqs.terraform) {
-      console.error("Error: terraform binary not found");
-      process.exit(1);
+      throw new CliError("terraform binary not found in PATH. Install terraform first.");
     }
     if (!prereqs.tfmigrate) {
-      console.error("Error: tfmigrate binary not found");
-      process.exit(1);
+      throw new CliError("tfmigrate binary not found in PATH. Install tfmigrate first: https://github.com/minamijoyo/tfmigrate");
     }
 
     const result = await dryRunMigration(hclFile, { dryRun: true, workingDir, tfBinary: cmdOpts.tfBinary });
     if (result.success) {
-      console.log("✓ Migration plan validated successfully");
-      console.log(result.output);
+      logger.log("✓ Migration plan validated successfully");
+      logger.log(result.output);
     } else {
-      console.error("✗ Migration plan validation failed");
-      console.error(result.error);
-      process.exit(1);
+      throw new CliError(`Migration plan validation failed:\n${result.error}`);
     }
   });
 
@@ -161,20 +197,17 @@ program
   .option("--preset <name>", "Use a preset config (e.g., gatekeeper)")
   .action(async (jsonFile: string, cmdOpts) => {
     const opts = program.opts();
+
+    await validateFile(jsonFile);
+    const { config: nsConfig, templateSuffix } = resolvePresetConfig(cmdOpts.preset);
+
     const content = await readFile(jsonFile, "utf-8");
-    const serialized: SerializedGraph = JSON.parse(content);
+    const serialized = parseJson<SerializedGraph>(content, jsonFile);
 
     const graph = {
       nodes: new Map(serialized.nodes.map((n) => [n.id, n])),
       edges: serialized.edges,
     };
-
-    let nsConfig: NamespaceConfig | undefined;
-    let templateSuffix: string | undefined;
-    if (cmdOpts.preset === "gatekeeper") {
-      nsConfig = gatekeeperModelConfig;
-      templateSuffix = gatekeeperModelReportTemplate;
-    }
 
     const plan = createMigrationPlan(graph, nsConfig);
     const arnRefs: ArnReference[] = [];
@@ -183,9 +216,9 @@ program
     if (opts.outputDir) {
       await mkdir(opts.outputDir, { recursive: true });
       await writeFile(join(opts.outputDir, "report.md"), report);
-      console.log(`Report written to ${join(opts.outputDir, "report.md")}`);
+      logger.log(`Report written to ${join(opts.outputDir, "report.md")}`);
     } else {
-      console.log(report);
+      logger.log(report);
     }
   });
 
@@ -197,6 +230,13 @@ program
   .option("--state-dir <dir>", "Directory containing <repo-name>.tfstate.json files")
   .action(async (paths: string[], cmdOpts) => {
     const opts = program.opts();
+
+    // Validate inputs
+    for (const p of paths) {
+      await validateDirectory(p);
+    }
+    const { config: nsConfig } = resolvePresetConfig(cmdOpts.preset);
+
     let parsedFiles: ParsedFile[] = [];
     for (const p of paths) {
       parsedFiles.push(...await scanDirectory(p));
@@ -205,11 +245,6 @@ program
     if (cmdOpts.stateDir) {
       const stateFiles = await loadStateDir(cmdOpts.stateDir);
       parsedFiles = enrichWithState(parsedFiles, stateFiles);
-    }
-
-    let nsConfig: NamespaceConfig | undefined;
-    if (cmdOpts.preset === "gatekeeper") {
-      nsConfig = gatekeeperModelConfig;
     }
 
     const graph = buildGraph(parsedFiles);
@@ -222,26 +257,31 @@ program
       await writeFile(join(opts.outputDir, "graph.dot"), basic);
       await writeFile(join(opts.outputDir, "graph-before.dot"), before);
       await writeFile(join(opts.outputDir, "graph-after.dot"), after);
-      console.log(`DOT graphs written to ${opts.outputDir}/`);
-      console.log("  graph.dot        — basic dependency graph");
-      console.log("  graph-before.dot — current state with problems highlighted");
-      console.log("  graph-after.dot  — target state after migration");
+      logger.log(`DOT graphs written to ${opts.outputDir}/`);
+      logger.log("  graph.dot        — basic dependency graph");
+      logger.log("  graph-before.dot — current state with problems highlighted");
+      logger.log("  graph-after.dot  — target state after migration");
     } else {
-      console.log(before);
+      logger.log(before);
     }
   });
 
-async function loadStateDir(dir: string) {
-  const entries = await readdir(dir);
-  const stateFiles = [];
-  for (const entry of entries) {
-    if (entry.endsWith(".tfstate.json")) {
-      const repo = entry.replace(".tfstate.json", "");
-      const content = await readFile(join(dir, entry), "utf-8");
-      stateFiles.push(parseStateJson(content, repo));
+// Global error handler — catches CliError thrown from any action
+async function main() {
+  try {
+    await program.parseAsync();
+  } catch (error: unknown) {
+    if (error instanceof CliError) {
+      logger.error(`Error: ${error.message}`);
+      process.exitCode = 1;
+    } else {
+      logger.error(`Unexpected error: ${formatError(error)}`);
+      if (program.opts().verbose) {
+        logger.error(error);
+      }
+      process.exitCode = 1;
     }
   }
-  return stateFiles;
 }
 
-program.parse();
+main();

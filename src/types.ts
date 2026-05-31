@@ -63,6 +63,7 @@ export interface ClassificationOverride {
 export interface NamespaceConfig {
   overrides?: ClassificationOverride[];
   customClassifier?: (node: GraphNode) => Namespace | null;
+  groupByRepo?: boolean;
 }
 
 export interface CutEdge {

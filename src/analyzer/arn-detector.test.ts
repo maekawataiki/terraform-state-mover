@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { classifyArnService, detectArns, getUnresolvedArns, groupByService } from "../../../src/analyzer/arn-detector.js";
-import type { ParsedFile } from "../../../src/types.js";
+import { classifyArnService, detectArns, getUnresolvedArns, groupByService } from "./arn-detector.js";
+import type { ParsedFile } from "../types.js";
 
 function makeParsedFile(blocks: Array<{ type: "resource" | "data"; resourceType: string; name: string; body: string; arns: string[] }>, repo = "repo1"): ParsedFile {
   return {

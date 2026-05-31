@@ -411,23 +411,14 @@ export function generateMarkdownReport(input: ReportInput): string {
     sections.push("");
   }
 
-  // Dependency graph (Mermaid) — Before / After
-  if (graph.nodes.size <= 30) {
-    sections.push("## Before\n");
-    sections.push(toMermaidBefore(graph, classifications));
-    sections.push("");
-    sections.push("## After\n");
-    sections.push(toMermaidAfter(graph, classifications));
-    sections.push("");
-  } else {
-    sections.push("## Before (namespace summary)\n");
-    sections.push(toMermaidSummaryBefore(graph, classifications, arnRefs));
-    sections.push("");
-    sections.push("## After (namespace summary)\n");
-    sections.push(toMermaidSummaryAfter(graph, classifications));
-    sections.push("");
-  }
-
+  // Dependency graph (Mermaid) — always namespace summary for readability
+  // Detailed per-node view is available in graph-before.dot / graph-after.dot
+  sections.push("## Before\n");
+  sections.push(toMermaidSummaryBefore(graph, classifications, arnRefs));
+  sections.push("");
+  sections.push("## After\n");
+  sections.push(toMermaidSummaryAfter(graph, classifications));
+  sections.push("");
   // Migration plan summary
   sections.push("## Migration Steps\n");
   sections.push(`- State moves: ${plan.steps.filter((s) => s.type === "state_mv").length}`);
@@ -458,97 +449,6 @@ export function generateMarkdownReport(input: ReportInput): string {
   }
 
   return sections.join("\n");
-}
-
-function toMermaidBefore(graph: DependencyGraph, classifications: Map<string, Namespace>): string {
-  const lines: string[] = ["```mermaid", "graph LR"];
-
-  const namespaces = new Map<string, GraphNode[]>();
-  for (const [id, node] of graph.nodes) {
-    const ns = classifications.get(id) || "service-unknown";
-    if (!namespaces.has(ns)) namespaces.set(ns, []);
-    namespaces.get(ns)!.push(node);
-  }
-
-  for (const [ns, nodes] of namespaces) {
-    const safeName = ns.replace(/[^a-zA-Z0-9]/g, "_");
-    lines.push(`  subgraph ${safeName}["${ns}"]`);
-    for (const node of nodes) {
-      const label = `${node.resourceType.replace("aws_", "")}.${node.name}`;
-      lines.push(`    ${safeId(node.id)}["${label}<br/><i>${node.repo}</i>"]`);
-    }
-    lines.push("  end");
-  }
-
-  for (const edge of graph.edges) {
-    const from = safeId(edge.from);
-    const to = safeId(edge.to);
-    const fromNode = graph.nodes.get(edge.from);
-    const toNode = graph.nodes.get(edge.to);
-    const crossRepo = fromNode && toNode && fromNode.repo !== toNode.repo;
-    if (edge.type === "arn" && crossRepo) {
-      lines.push(`  ${from} -. "⚠ ARN" .-> ${to}`);
-    } else if (edge.type === "arn") {
-      lines.push(`  ${from} -. "ARN" .-> ${to}`);
-    } else if (edge.type === "remote_state") {
-      lines.push(`  ${from} -. "remote_state" .-> ${to}`);
-    } else {
-      lines.push(`  ${from} --> ${to}`);
-    }
-  }
-
-  // Style problem edges red
-  const problemNodes = new Set<string>();
-  for (const edge of graph.edges) {
-    const fromNode = graph.nodes.get(edge.from);
-    const toNode = graph.nodes.get(edge.to);
-    if (edge.type === "arn" && fromNode && toNode && fromNode.repo !== toNode.repo) {
-      problemNodes.add(safeId(edge.from));
-      problemNodes.add(safeId(edge.to));
-    }
-  }
-  if (problemNodes.size > 0) {
-    lines.push(`  style ${[...problemNodes].join(",")} stroke:#D32F2F,stroke-width:2px`);
-  }
-
-  lines.push("```");
-  return lines.join("\n");
-}
-
-function toMermaidAfter(graph: DependencyGraph, classifications: Map<string, Namespace>): string {
-  const lines: string[] = ["```mermaid", "graph LR"];
-
-  const namespaces = new Map<string, GraphNode[]>();
-  for (const [id, node] of graph.nodes) {
-    const ns = classifications.get(id) || "service-unknown";
-    if (!namespaces.has(ns)) namespaces.set(ns, []);
-    namespaces.get(ns)!.push(node);
-  }
-
-  for (const [ns, nodes] of namespaces) {
-    const safeName = ns.replace(/[^a-zA-Z0-9]/g, "_");
-    lines.push(`  subgraph ${safeName}["${ns}"]`);
-    for (const node of nodes) {
-      const label = `${node.resourceType.replace("aws_", "")}.${node.name}`;
-      lines.push(`    ${safeId(node.id)}["${label}"]`);
-    }
-    lines.push("  end");
-  }
-
-  for (const edge of graph.edges) {
-    const from = safeId(edge.from);
-    const to = safeId(edge.to);
-    const fromNs = classifications.get(edge.from);
-    const toNs = classifications.get(edge.to);
-    if (fromNs !== toNs) {
-      lines.push(`  ${from} -. "var/output" .-> ${to}`);
-    } else {
-      lines.push(`  ${from} --> ${to}`);
-    }
-  }
-
-  lines.push("```");
-  return lines.join("\n");
 }
 
 function safeId(id: string): string {

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { findCrossNamespaceEdges, groupCutsByNamespacePair } from "../../../src/planner/cut-finder.js";
-import type { DependencyGraph, GraphNode, GraphEdge } from "../../../src/types.js";
+import { findCrossNamespaceEdges, groupCutsByNamespacePair } from "./cut-finder.js";
+import type { DependencyGraph, GraphNode, GraphEdge } from "../types.js";
 
 function makeGraph(nodes: GraphNode[], edges: GraphEdge[]): DependencyGraph {
   const nodeMap = new Map<string, GraphNode>();

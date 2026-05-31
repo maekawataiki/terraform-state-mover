@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { checkPrerequisites, dryRunMigration, generateRollback } from "../../../src/state/tfmigrate-executor.js";
-import type { ShellRunner } from "../../../src/state/tfmigrate-executor.js";
-import type { MigrationPlan } from "../../../src/types.js";
+import { checkPrerequisites, dryRunMigration, generateRollback } from "./tfmigrate-executor.js";
+import type { ShellRunner } from "./tfmigrate-executor.js";
+import type { MigrationPlan } from "../types.js";
 
 describe("tfmigrate-executor", () => {
   describe("checkPrerequisites", () => {

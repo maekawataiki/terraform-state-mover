@@ -25,7 +25,19 @@ export const gatekeeperModelConfig: NamespaceConfig = {
 };
 
 /**
+ * Normalize a service name to produce a consistent namespace slug.
+ * Converts underscores to hyphens and lowercases.
+ */
+function normalizeServiceName(name: string): string {
+  return name.toLowerCase().replace(/_/g, "-");
+}
+
+/**
  * Classify a resource using Gatekeeper Model naming conventions.
+ *
+ * In the Gatekeeper Model, the central repo contains IAM roles that *should*
+ * belong to service repos. This classifier identifies which service each role
+ * belongs to by matching name patterns against known service repo names.
  */
 export function classifyGatekeeperResource(node: GraphNode, options?: GatekeeperModelOptions): Namespace | null {
   const centralRepo = options?.centralRepoName ?? DEFAULT_CENTRAL_REPO;
@@ -40,11 +52,15 @@ export function classifyGatekeeperResource(node: GraphNode, options?: Gatekeeper
     return "platform";
   }
 
-  // Service roles following {service}-* naming → service-{name}
+  // Service roles following {service}-* naming → service-{service}
+  // Use greedy match for multi-segment service names (e.g., app_api_lambda_exec → app-api)
   if (node.resourceType === "aws_iam_role") {
-    const serviceMatch = node.name.match(/^([a-z][\w-]+?)[-_](rds|lambda|s3|kinesis|sqs|sns|dynamodb)/i);
-    if (serviceMatch) {
-      return `service-${serviceMatch[1]}`;
+    // Match pattern: {service_name}_{suffix} where suffix is a known role purpose
+    const roleSuffixes = /[-_](rds[-_]?access|lambda[-_]?exec|s3[-_]?access|kinesis[-_]?access|sqs[-_]?access|sns[-_]?access|dynamodb[-_]?access|db[-_]?access|processor[-_]?role|processor|exec|role|reader|writer|access)$/i;
+    const suffixMatch = node.name.match(roleSuffixes);
+    if (suffixMatch) {
+      const servicePart = node.name.slice(0, suffixMatch.index);
+      return `service-${normalizeServiceName(servicePart)}`;
     }
   }
 
@@ -52,7 +68,7 @@ export function classifyGatekeeperResource(node: GraphNode, options?: Gatekeeper
   if (node.repo === centralRepo && node.resourceType === "aws_iam_role") {
     const serviceMatch = node.name.match(/^([a-z][\w-]+?)[-_]/);
     if (serviceMatch) {
-      return `service-${serviceMatch[1]}`;
+      return `service-${normalizeServiceName(serviceMatch[1])}`;
     }
   }
 
@@ -61,6 +77,7 @@ export function classifyGatekeeperResource(node: GraphNode, options?: Gatekeeper
     return "foundation";
   }
 
+  // Return null to fall through to the default repo-based classifier
   return null;
 }
 

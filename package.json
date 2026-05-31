@@ -5,6 +5,24 @@
   "description": "Analyze cross-repository Terraform HCL files, detect hardcoded ARN dependencies, and generate migration plans",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js",
+    "./types": "./dist/types.js",
+    "./parser/hcl-parser": "./dist/parser/hcl-parser.js",
+    "./parser/crossplane-parser": "./dist/parser/crossplane-parser.js",
+    "./analyzer/dependency-graph": "./dist/analyzer/dependency-graph.js",
+    "./analyzer/arn-detector": "./dist/analyzer/arn-detector.js",
+    "./analyzer/namespace-classifier": "./dist/analyzer/namespace-classifier.js",
+    "./planner/migration-planner": "./dist/planner/migration-planner.js",
+    "./planner/cut-finder": "./dist/planner/cut-finder.js",
+    "./planner/code-rewriter": "./dist/planner/code-rewriter.js",
+    "./reporter/markdown-reporter": "./dist/reporter/markdown-reporter.js",
+    "./presets/gatekeeper": "./dist/presets/gatekeeper.js",
+    "./state/state-reader": "./dist/state/state-reader.js",
+    "./state/tfmigrate-executor": "./dist/state/tfmigrate-executor.js",
+    "./state/state-differ": "./dist/state/state-differ.js",
+    "./utils/error": "./dist/utils/error.js"
+  },
   "bin": {
     "tf-state-mover": "dist/cli.js"
   },

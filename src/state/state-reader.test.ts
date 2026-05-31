@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { parseStateJson, buildArnMap, enrichWithState } from "../../../src/state/state-reader.js";
-import type { ParsedFile } from "../../../src/types.js";
+import { parseStateJson, buildArnMap, enrichWithState } from "./state-reader.js";
+import type { ParsedFile } from "../types.js";
 
 const sampleStateJson = JSON.stringify({
   version: 4,

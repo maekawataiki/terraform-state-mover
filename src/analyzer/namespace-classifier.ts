@@ -38,14 +38,44 @@ const SERVICE_TYPES = [
   "aws_apigatewayv2_api",
 ];
 
+/** Well-known prefixes for inferring namespace from repo names */
+const FOUNDATION_REPO_PATTERNS = [/^infra-foundation/, /^org-/, /^scp-/];
+const PLATFORM_REPO_PATTERNS = [/^infra-platform/, /^infra-shared/, /^platform-/];
+const SERVICE_REPO_PATTERNS = [/^service-/, /^svc-/, /^app-/];
+
+/**
+ * Infer namespace from a repo name using naming conventions.
+ * Returns null if no convention matches.
+ */
+function inferNamespaceFromRepo(repo: string): Namespace | null {
+  if (FOUNDATION_REPO_PATTERNS.some((p) => p.test(repo))) return "foundation";
+  if (PLATFORM_REPO_PATTERNS.some((p) => p.test(repo))) return "platform";
+  if (SERVICE_REPO_PATTERNS.some((p) => p.test(repo))) return repoToServiceNamespace(repo);
+  return null;
+}
+
+/**
+ * Derive the service namespace name for a repo.
+ * Strips common prefixes to produce a clean name.
+ */
+function repoToServiceNamespace(repo: string): Namespace {
+  // Already has service- prefix? Use as-is
+  if (repo.startsWith("service-")) return `service-${repo.slice(8)}` as Namespace;
+  if (repo.startsWith("svc-")) return `service-${repo.slice(4)}` as Namespace;
+  if (repo.startsWith("app-")) return `service-${repo.slice(4)}` as Namespace;
+  return `service-${repo}`;
+}
+
 export function classifyResource(node: GraphNode, config?: NamespaceConfig): Namespace {
-  // Check customClassifier first (takes precedence over overrides)
+  const groupByRepo = config?.groupByRepo ?? true;
+
+  // Check customClassifier first (takes precedence over everything)
   if (config?.customClassifier) {
     const result = config.customClassifier(node);
     if (result !== null) return result;
   }
 
-  // Check overrides first
+  // Check overrides
   if (config?.overrides) {
     for (const override of config.overrides) {
       if (override.resourceType && override.resourceName) {
@@ -70,7 +100,28 @@ export function classifyResource(node: GraphNode, config?: NamespaceConfig): Nam
   // Platform: shared infrastructure
   if (PLATFORM_TYPES.includes(node.resourceType)) return "platform";
 
-  // Service: application-level resources
+  // --- Repo-based grouping (new default behavior) ---
+  if (groupByRepo) {
+    // Try repo naming conventions first
+    const repoNs = inferNamespaceFromRepo(node.repo);
+    if (repoNs) return repoNs;
+
+    // Service-type resources: group by repo
+    if (SERVICE_TYPES.includes(node.resourceType)) {
+      return repoToServiceNamespace(node.repo);
+    }
+
+    // IAM roles: classify by name convention, but fallback to repo
+    if (node.resourceType === "aws_iam_role") {
+      if (/platform|shared|infra/i.test(node.name)) return "platform";
+      return repoToServiceNamespace(node.repo);
+    }
+
+    // Default: group by repo
+    return repoToServiceNamespace(node.repo);
+  }
+
+  // --- Legacy per-resource behavior (groupByRepo: false) ---
   if (SERVICE_TYPES.includes(node.resourceType)) {
     return `service-${node.name}`;
   }
