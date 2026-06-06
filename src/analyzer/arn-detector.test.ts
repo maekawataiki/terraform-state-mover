@@ -44,6 +44,18 @@ describe("arn-detector", () => {
     it("returns unknown for malformed ARN", () => {
       expect(classifyArnService("not-an-arn")).toBe("unknown");
     });
+
+    it("classifies aws-cn partition ARNs", () => {
+      expect(classifyArnService("arn:aws-cn:iam::123456789012:role/MyRole")).toBe("iam");
+      expect(classifyArnService("arn:aws-cn:s3:::my-bucket")).toBe("s3");
+      expect(classifyArnService("arn:aws-cn:lambda:cn-north-1:123456789012:function:my-func")).toBe("lambda");
+    });
+
+    it("classifies aws-us-gov partition ARNs", () => {
+      expect(classifyArnService("arn:aws-us-gov:iam::123456789012:role/MyRole")).toBe("iam");
+      expect(classifyArnService("arn:aws-us-gov:s3:::my-bucket")).toBe("s3");
+      expect(classifyArnService("arn:aws-us-gov:dynamodb:us-gov-west-1:123456789012:table/MyTable")).toBe("dynamodb");
+    });
   });
 
   describe("detectArns", () => {
@@ -82,6 +94,32 @@ describe("arn-detector", () => {
       // The ARN defined by repo1's resource should be resolved for repo2's reference
       const resolved = arns_result.filter((a) => a.resolved);
       expect(resolved.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it("detects aws-cn partition ARNs", () => {
+      const files = [makeParsedFile([{
+        type: "resource",
+        resourceType: "aws_iam_role",
+        name: "cn_role",
+        body: "{}",
+        arns: ["arn:aws-cn:iam::123456789012:role/ChinaRole"],
+      }])];
+      const arns = detectArns(files);
+      expect(arns).toHaveLength(1);
+      expect(arns[0].service).toBe("iam");
+    });
+
+    it("detects aws-us-gov partition ARNs", () => {
+      const files = [makeParsedFile([{
+        type: "resource",
+        resourceType: "aws_s3_bucket",
+        name: "gov_bucket",
+        body: "{}",
+        arns: ["arn:aws-us-gov:s3:::gov-bucket"],
+      }])];
+      const arns = detectArns(files);
+      expect(arns).toHaveLength(1);
+      expect(arns[0].service).toBe("s3");
     });
 
     it("identifies unresolved ARNs", () => {

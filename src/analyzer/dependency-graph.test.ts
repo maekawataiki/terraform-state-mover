@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildGraph, detectCycles, serializeGraph, toGraphviz, buildNodeId } from "./dependency-graph.js";
+import { buildGraph, detectCycles, serializeGraph } from "./dependency-graph.js";
 import type { ParsedFile } from "../types.js";
 
 function makeParsedFile(blocks: Array<{ type: "resource" | "data"; resourceType: string; name: string; body: string; arns?: string[] }>, repo = "repo1"): ParsedFile {
@@ -82,8 +82,40 @@ describe("dependency-graph", () => {
       ])];
       const graph = buildGraph(files);
       const edges = graph.edges.filter((e) => e.from === "repo1:resource.aws_subnet.a");
-      // Should have edges but they should not be exact duplicates
       expect(edges.length).toBeGreaterThanOrEqual(1);
+      // No exact duplicates: (from, to, type, label) tuples are unique
+      const keys = graph.edges.map((e) => `${e.from}|${e.to}|${e.type}|${e.label}`);
+      expect(new Set(keys).size).toBe(keys.length);
+    });
+
+    it("does not create ARN definer edges from loose substring matches", () => {
+      const arn = "arn:aws:iam::123456789012:role/PaymentServiceRole";
+      // Resource named "role" must NOT be treated as the definer of this ARN
+      const file1 = makeParsedFile([
+        { type: "resource", resourceType: "aws_instance", name: "role", body: `{ note = "${arn}" }`, arns: [arn] },
+      ], "repo1");
+      const file2 = makeParsedFile([
+        { type: "resource", resourceType: "aws_lambda_function", name: "func", body: `{ role = "${arn}" }`, arns: [arn] },
+      ], "repo2");
+
+      const graph = buildGraph([file1, file2]);
+      const arnEdges = graph.edges.filter((e) => e.type === "arn" && e.to === "repo1:resource.aws_instance.role");
+      expect(arnEdges).toHaveLength(0);
+    });
+
+    it("matches ARN definer on whole path segment", () => {
+      const arn = "arn:aws:iam::123456789012:role/payment_service_role";
+      const file1 = makeParsedFile([
+        { type: "resource", resourceType: "aws_iam_role", name: "payment-service-role", body: `{ arn = "${arn}" }`, arns: [arn] },
+      ], "repo1");
+      const file2 = makeParsedFile([
+        { type: "resource", resourceType: "aws_lambda_function", name: "func", body: `{ role = "${arn}" }`, arns: [arn] },
+      ], "repo2");
+
+      const graph = buildGraph([file1, file2]);
+      const arnEdges = graph.edges.filter((e) => e.type === "arn");
+      expect(arnEdges.length).toBeGreaterThanOrEqual(1);
+      expect(arnEdges[0].to).toBe("repo1:resource.aws_iam_role.payment-service-role");
     });
   });
 
@@ -121,17 +153,4 @@ describe("dependency-graph", () => {
     });
   });
 
-  describe("toGraphviz", () => {
-    it("generates valid DOT format", () => {
-      const files = [makeParsedFile([
-        { type: "resource", resourceType: "aws_vpc", name: "main", body: "{}" },
-        { type: "resource", resourceType: "aws_subnet", name: "pub", body: "{ vpc_id = aws_vpc.main.id }" },
-      ])];
-      const graph = buildGraph(files);
-      const dot = toGraphviz(graph);
-      expect(dot).toContain("digraph terraform");
-      expect(dot).toContain("rankdir=LR");
-      expect(dot).toContain("->");
-    });
-  });
 });

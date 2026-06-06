@@ -1,8 +1,10 @@
 resource "aws_rds_cluster" "main" {
-  cluster_identifier = "prod-db"
-  engine             = "aurora-postgresql"
-  master_username    = "admin"
-  master_password    = "changeme"
+  cluster_identifier  = "prod-db"
+  engine              = "aurora-postgresql"
+  engine_version      = "15.4"
+  master_username     = "admin"
+  master_password     = "changeme"
+  skip_final_snapshot = true
 }
 
 module "app" {

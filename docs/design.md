@@ -6,10 +6,11 @@ terraform-state-mover provides the **analysis layer** for Terraform state refact
 
 ## Design Principles
 
-1. **Analysis, not execution** — Execution is delegated to tfmigrate; this tool focuses on analysis and plan generation.
+1. **Analysis + code migration** — State execution is delegated to `terraform apply` (TF 1.7+ import/removed blocks) or tfmigrate; this tool handles analysis, code rewriting, and plan generation.
 2. **Repo-as-boundary** — Repositories are treated as the smallest unit of ownership. Resources in the same repo share a lifecycle.
 3. **Evidence-based diagnosis** — Every detected pattern includes evidence (resource names, file paths, counts) so users can validate findings.
 4. **Incremental adoption** — The tool works without state files (reduced precision but never blocked). State files improve accuracy when available.
+5. **Non-destructive by default** — `migrate` command writes to `output/` unless `--apply` is explicitly used. Namespace filtering enables gradual rollout.
 
 ## Data Flow
 
@@ -57,13 +58,18 @@ terraform-state-mover provides the **analysis layer** for Terraform state refact
 - **Custom classifier hook** — `NamespaceConfig.customClassifier` allows presets to inject domain-specific classification logic.
 - **ARN definer heuristic** — The definer of an ARN is identified by matching resource type against the ARN service, and checking whether the resource name appears in the ARN path.
 
-### planner/ — Migration Plan Generation
+### planner/ — Migration Plan & Code Generation
 
 | File | Responsibility |
 |------|---------------|
+| `hcl-migrator.ts` | Orchestrates full migration pipeline (block moves + ARN rewrites + outputs + import/removed blocks) |
+| `hcl-block-mover.ts` | Extracts resource blocks from source files, generates target files, removes from source |
+| `arn-rewriter.ts` | Replaces hardcoded ARNs with `var.{name}` references, generates `variables.tf` |
+| `output-generator.ts` | Generates `output` blocks in producer repos for cross-repo resource interfaces |
+| `moved-block-generator.ts` | Generates TF 1.7+ `import`/`removed` blocks or TF 1.5+ `moved` blocks |
 | `cut-finder.ts` | Detect cross-namespace edges and assign importance scores |
-| `migration-planner.ts` | Generate state_mv / import / code_rewrite steps; topological sort; tfmigrate HCL output |
-| `code-rewriter.ts` | Generate diffs replacing hardcoded ARNs with `data` sources or `variable` references |
+| `migration-planner.ts` | Generate state_mv / import steps; topological sort; tfmigrate HCL output |
+| `code-rewriter.ts` | Low-level ARN rewrite utilities (diffs, variable/datasource generation) |
 
 **Key Design Decisions:**
 
@@ -163,7 +169,9 @@ All types are centralized in `src/types.ts`. This prevents circular dependencies
 ## Future Considerations
 
 - **hcl2json integration** — Optional use of the hcl2json binary for accurate AST parsing
-- **Terraform 1.7+ moved/import blocks** — Generate declarative `moved` blocks in addition to tfmigrate HCL
 - **Interactive mode** — CLI wizard for reviewing and adjusting namespace classifications
 - **CI integration** — GitHub Actions / GitLab CI to post diagnosis reports as PR comments
 - **Incremental analysis** — Cache the dependency graph and re-analyze only changed files
+- **PR generation** — Auto-create PRs in source/target repos after `--apply`
+- **for_each rewrite** — Automate `count = length(...)` → `for_each` transformation
+- **Multi-backend state** — Support S3/GCS/Azure remote state fetching directly

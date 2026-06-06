@@ -2,7 +2,7 @@ import { readFile, readdir, stat } from "node:fs/promises";
 import { join, basename } from "node:path";
 import type { TerraformBlock, ParsedFile } from "../types.js";
 
-const ARN_PATTERN = /arn:aws:[a-z0-9-]+:[a-z0-9-]*:[0-9]*:[a-zA-Z0-9/_.\-:*]+/g;
+const ARN_PATTERN = /arn:(?:aws|aws-cn|aws-us-gov):[a-z0-9-]+:[a-z0-9-]*:[0-9]*:[a-zA-Z0-9/_.\-:*]+/g;
 
 export interface CrossplaneResource {
   apiVersion: string;
@@ -32,7 +32,7 @@ export function parseCrossplaneYaml(content: string, filePath: string, repo: str
     if (!kindMatch) continue;
 
     const kind = kindMatch[1].trim();
-    const apiVersion = apiVersionMatch?.[1].trim() || "";
+    const _apiVersion = apiVersionMatch?.[1].trim() || "";
     const name = nameMatch?.[1].trim() || "unnamed";
 
     const arns = [...doc.matchAll(ARN_PATTERN)].map((m) => m[0]);
@@ -69,7 +69,7 @@ export function parseCrossplaneYaml(content: string, filePath: string, repo: str
   return blocks;
 }
 
-function mapKindToResourceType(kind: string, body: string): string {
+function mapKindToResourceType(kind: string, _body: string): string {
   const mapping: Record<string, string> = {
     Role: "aws_iam_role",
     Policy: "aws_iam_policy",

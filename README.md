@@ -1,81 +1,103 @@
 # terraform-state-mover
 
-The missing analysis layer for Terraform state refactoring.
+The missing **analysis + code migration** layer for Terraform state refactoring.
 
-Existing tools (`tfmigrate`, `tfsplit`, `terraform state mv`) can **execute** state operations — but they can't tell you **what to move where**. This tool does.
+Existing tools (`tfmigrate`, `tfsplit`, `terraform state mv`) can **execute** state operations — but they can't tell you **what to move where**, and they don't touch your HCL code. This tool does both.
 
-## What It Detects
+## What It Does
 
-| Anti-Pattern | Symptom | References |
-|---|---|---|
-| **Gatekeeper** | Central team bottlenecks IAM changes, PRs take days | [AWS Role Vending Machine](https://docs.aws.amazon.com/prescriptive-guidance/latest/patterns/provision-least-privilege-iam-roles-by-deploying-a-role-vending-machine-solution.html) |
-| **Terralith** | 500+ resources in one state, 10-min plans | [Masterpoint](https://masterpoint.io/blog/terralith-monolithic-terraform-architecture/), [Scalr](https://scalr.com/learning-center/the-terraform-opentofu-terralith) |
-| **Spaghetti State** | `terraform_remote_state` everywhere, cascade failures | [Peloton Engineering](https://medium.com/peloton-engineering/stop-using-terraform-remote-state-blocks-2f2d5cea300b) |
-| **God Module** | One module with 100+ variables, impossible to test | [Scalr](https://scalr.com/learning-center/structuring-terraform-and-opentofu-a-platform-engineers-four-part-guide-2) |
-| **Count on Collection** | `count = length(...)` — item removal destroys N resources | [7 Anti-Patterns](https://decodeops.substack.com/p/7-terraform-anti-patterns-quietly) |
-| **Depends On Module** | `depends_on` on a module — disables parallelism | [7 Anti-Patterns](https://decodeops.substack.com/p/7-terraform-anti-patterns-quietly) |
-| **Environment Copypasta** | dev/stg/prod are drifting copy-paste directories | Terragrunt exists to solve this |
-| **Provider Coupling** | Multiple provider aliases in one state | [HashiCorp Refactor](https://developer.hashicorp.com/terraform/language/state/refactor) |
-| **Circular Remote State** | A→B→A remote_state cycles | — |
+1. **Analyzes** cross-repo Terraform dependencies (hardcoded ARNs, remote_state, provider coupling)
+2. **Diagnoses** anti-patterns with quantified Before/After metrics
+3. **Generates a complete migration**: HCL block moves, ARN→variable rewrites, output declarations, import/removed blocks — not just state operations
 
-## How It Works
+## What It Detects (and Fixes)
 
-```
-Scan HCL/Crossplane → Build dependency graph → Classify by namespace → Diagnose problems → Generate migration plan
-```
+| Anti-Pattern | Symptom | Fix | References |
+|---|---|---|---|
+| **Gatekeeper** | Central team bottlenecks IAM changes, PRs take days | Move service-specific roles to owning repos → `import`/`removed` blocks | [AWS Role Vending Machine](https://docs.aws.amazon.com/prescriptive-guidance/latest/patterns/provision-least-privilege-iam-roles-by-deploying-a-role-vending-machine-solution.html) |
+| **Terralith** | 500+ resources in one state, 10-min plans | Split by namespace → HCL block moves + state migration | [Masterpoint](https://masterpoint.io/blog/terralith-monolithic-terraform-architecture/), [Scalr](https://scalr.com/learning-center/the-terraform-opentofu-terralith) |
+| **Spaghetti State** | `terraform_remote_state` everywhere, cascade failures | Replace hardcoded ARNs → `var`/`output` interface | [Peloton Engineering](https://medium.com/peloton-engineering/stop-using-terraform-remote-state-blocks-2f2d5cea300b) |
+| **God Module** | One module with 100+ variables, impossible to test | Decompose into focused modules (detection only) | [Scalr](https://scalr.com/learning-center/structuring-terraform-and-opentofu-a-platform-engineers-four-part-guide-2) |
+| **Count on Collection** | `count = length(...)` — item removal destroys N resources | Rewrite to `for_each` (detection only) | [7 Anti-Patterns](https://decodeops.substack.com/p/7-terraform-anti-patterns-quietly) |
+| **Depends On Module** | `depends_on` on a module — disables parallelism | Remove and use explicit data references (detection only) | [7 Anti-Patterns](https://decodeops.substack.com/p/7-terraform-anti-patterns-quietly) |
+| **Environment Copypasta** | dev/stg/prod are drifting copy-paste directories | Consolidate with Terragrunt/workspaces (detection only) | Terragrunt exists to solve this |
+| **Provider Coupling** | Multiple provider aliases in one state | Separate by provider boundary → cross-state migration | [HashiCorp Refactor](https://developer.hashicorp.com/terraform/language/state/refactor) |
+| **Circular Remote State** | A→B→A remote_state cycles | Break cycle via shared outputs layer (detection only) | — |
 
-The output is a **diagnosis report** (what's wrong, what to fix, quantified Before/After with Mermaid graphs) plus a **tfmigrate-compatible `.hcl` file** you can execute directly.
-
-### Key Features
-
-- **Comment/heredoc-aware parser** — ARNs in comments or `<<EOF` blocks are correctly ignored
-- **Repo-based namespace grouping** — resources in the same repo are classified together (no namespace explosion)
-- **Topological sort** — migration steps are ordered by dependency (move leaves first)
-- **State-aware ID resolution** — provide `.tfstate.json` to get real resource IDs in import commands
-- **Deduplication** — same resource is never moved or imported twice
+> **Automated fix** = this tool generates the full migration. **Detection only** = flagged in report with guidance, manual refactoring needed.
 
 ## Quick Start
 
 ```bash
 pnpm install
-pnpm demo          # run all 8 example scenarios → output/
+pnpm demo          # run all 9 example scenarios → output/
 ```
 
 ### On your own repos
 
 ```bash
-# 1. Pull state for accurate ARN resolution
+# 1. Pull state for accurate resource ID resolution
 terraform -chdir=./infra-central state pull > states/infra-central.tfstate.json
 
-# 2. Analyze
-pnpm cli analyze ./infra-central ./service-api ./service-analytics \
+# 2. Analyze and generate full migration (non-destructive, writes to output/)
+pnpm cli migrate ./infra-central ./service-api ./service-analytics \
   --preset gatekeeper \
   --state-dir ./states \
   -o ./output
 
-# 3. Review report (includes Mermaid Before/After graphs)
-cat output/report.md
+# 3. Review the generated migration
+cat output/migrate-plan.json        # full plan details
+cat output/diffs/migration.diff     # unified diff of all changes
+ls output/migrated/                 # file tree after migration
 
-# 4. Generate migration plan
-pnpm cli plan ./infra-central ./service-api \
+# 4. Apply when ready (writes to source repos)
+pnpm cli migrate ./infra-central ./service-api ./service-analytics \
+  --preset gatekeeper \
   --state-dir ./states \
-  -o ./output
+  --apply
 
-# 5. Dry-run with tfmigrate
-tfmigrate plan output/migrate.hcl
+# 5. Run terraform in both repos
+cd service-api && terraform apply    # imports resource into new state
+cd infra-central && terraform apply  # removes resource from old state (no destroy)
 
-# 6. Execute
-tfmigrate apply output/migrate.hcl
-terraform plan  # expect: no changes
+# 6. Verify
+terraform plan  # expect: no changes in both repos
 ```
+
+### Incremental Migration
+
+Migrate one namespace at a time to reduce risk:
+
+```bash
+pnpm cli migrate ./infra-central ./service-orders \
+  --preset gatekeeper --namespace service-orders \
+  --state-dir ./states -o output/phase1
+
+# Verify, then next namespace
+pnpm cli migrate ./infra-central ./service-payments \
+  --preset gatekeeper --namespace service-payments \
+  --state-dir ./states -o output/phase2
+```
+
+> **Note**: State files are only needed for accurate `import` block generation (resolving resource IDs). Analysis and code migration work without state files — you'll just get placeholder IDs in import blocks.
 
 ## CLI Commands
 
 ```bash
-# Analyze repos and generate full report
+# Full code migration (recommended)
+pnpm cli migrate <paths...> [options]
+  --preset <name>        Preset config (gatekeeper, terralith, spaghetti)
+  --state-dir <dir>      Directory with <repo>.tfstate.json files
+  --namespace <ns>       Only migrate edges involving this namespace
+  --mode <mode>          import (TF 1.7+, default), moved (TF 1.5+), tfmigrate (legacy)
+  --apply                Write migration files to source repos (does NOT run terraform apply)
+  --validate             Run terraform validate on output
+  -o <dir>               Output directory for generated files
+
+# Analyze repos and generate diagnosis report
 pnpm cli analyze <paths...> [--preset gatekeeper] [--state-dir ./states] [-o ./output]
 
-# Generate migration plan only
+# Generate migration plan only (state operations)
 pnpm cli plan <paths...> [--state-dir ./states] [-o ./output]
 
 # Validate migration plan via tfmigrate dry-run
@@ -88,17 +110,35 @@ pnpm cli report <graph.json> [--preset gatekeeper]
 pnpm cli visualize <paths...> [--preset gatekeeper] [--state-dir ./states]
 ```
 
-### Error Handling
+### Migration Modes
 
-The CLI provides clear error messages for common issues:
+| Mode | TF Version | What It Generates | Use Case |
+|---|---|---|---|
+| `import` (default) | ≥ 1.7 | `imports.tf` + `removed.tf` | Cross-state migration without tfmigrate |
+| `moved` | ≥ 1.5 | `moved.tf` | Same-state address renames |
+| `tfmigrate` | Any | `migrate.hcl` only | Legacy TF, or cross-state with tfmigrate |
 
-```
-$ pnpm cli analyze /nonexistent
-Error: Directory not found: /nonexistent
+## What Gets Generated
 
-$ pnpm cli analyze ./infra --preset bogus
-Error: Unknown preset: "bogus". Available presets: gatekeeper
-```
+### `migrate` command (`-o output/`)
+
+| File | Purpose |
+|------|---------|
+| `migrate-plan.json` | Full migration plan (moves, rewrites, outputs, imports) |
+| `migrate.hcl` | tfmigrate-compatible multi_state migration |
+| `migrated/` | Complete file tree after migration (preview) |
+| `diffs/migration.diff` | Unified diff of all file changes |
+| `rollback/` | Reverse migration plan (if needed) |
+
+### `analyze` command (`-o output/`)
+
+| File | Purpose |
+|------|---------|
+| `report.md` | Diagnosis, Before/After Mermaid, migration order |
+| `migrate.hcl` | tfmigrate-compatible multi_state migration |
+| `migrate.sh` | Shell script alternative |
+| `plan.json` | Machine-readable plan |
+| `graph-before.dot` / `graph-after.dot` | Graphviz DOT files |
 
 ## Example Report Output
 
@@ -117,37 +157,13 @@ Error: Unknown preset: "bogus". Available presets: gatekeeper
 | Deploy flow         | Multi-repo PR | 1 PR, 1 CI run |
 ```
 
-## Visualization
-
-The report embeds Mermaid graphs (renders in GitHub/GitLab/VSCode). For large repos (30+ nodes), it shows a namespace-level summary with edge counts.
-
-DOT files are also generated for high-quality SVGs:
-
-```bash
-dot -Tsvg output/graph-before.dot -o output/graph-before.svg
-dot -Tsvg output/graph-after.dot -o output/graph-after.svg
-```
-
-- **Before**: Namespace groups, nodes show current repo. Red = hardcoded ARN, blue = remote_state.
-- **After**: Same layout, all cross-namespace edges become green `var/output` interfaces.
-
-## Output Files
-
-| File | Purpose |
-|------|---------|
-| `report.md` | Diagnosis, Before/After Mermaid, migration order |
-| `migrate.hcl` | [tfmigrate](https://github.com/minamijoyo/tfmigrate)-compatible multi_state migration |
-| `migrate.sh` | Shell script alternative |
-| `plan.json` | Machine-readable plan |
-| `graph-before.dot` | Graphviz: current state with problems |
-| `graph-after.dot` | Graphviz: target state |
-
 ## Examples
 
 Bundled scenarios demonstrate each anti-pattern:
 
 ```bash
-pnpm demo:gatekeeper        # centralized IAM bottleneck
+pnpm demo:gatekeeper        # centralized IAM bottleneck (small)
+pnpm demo:gatekeeper-large  # centralized IAM bottleneck (7 services)
 pnpm demo:terralith         # monolithic 33-resource state
 pnpm demo:spaghetti         # cross-state remote_state + ARN tangle
 pnpm demo:cross-account     # multi-account provider alias mess
@@ -173,8 +189,9 @@ import { scanDirectory, parseHcl } from "terraform-state-mover/parser/hcl-parser
 import { buildGraph } from "terraform-state-mover/analyzer/dependency-graph";
 import { classifyGraph } from "terraform-state-mover/analyzer/namespace-classifier";
 import { createMigrationPlan } from "terraform-state-mover/planner/migration-planner";
+import { planMigration, applyMigration } from "terraform-state-mover/planner/hcl-migrator";
 import { generateMarkdownReport } from "terraform-state-mover/reporter/markdown-reporter";
-import type { DependencyGraph, NamespaceConfig } from "terraform-state-mover/types";
+import type { DependencyGraph, NamespaceConfig, MigrateResult } from "terraform-state-mover/types";
 ```
 
 ### Namespace Configuration
@@ -198,26 +215,54 @@ const config: NamespaceConfig = { groupByRepo: false };
 
 ```
 src/
+├── commands/         CLI command handlers (one file per command)
+│   ├── analyze.ts, migrate.ts, plan.ts, report.ts, validate.ts, visualize.ts
+│   └── shared.ts            Preset resolution, state loading, parser warnings
 ├── parser/           HCL + Crossplane YAML scanning (comment/heredoc-aware)
 ├── analyzer/         Dependency graph, ARN detection, namespace classification
 ├── planner/          Cut finding, topological sort, migration plan, code rewriting
-├── state/            Real state integration, resource ID resolution, tfmigrate executor
-├── reporter/         Markdown report with diagnosis + Mermaid
-├── presets/          Classification rules (gatekeeper model, extensible)
+│   ├── hcl-migrator.ts         Orchestrates full migration pipeline
+│   ├── hcl-block-mover.ts      Extracts/moves resource blocks between repos
+│   ├── arn-rewriter.ts         Rewrites hardcoded ARNs → variable references
+│   ├── output-generator.ts     Generates output blocks for cross-repo interfaces
+│   ├── moved-block-generator.ts  Generates import/removed/moved blocks
+│   ├── migration-planner.ts    State-level migration planning + tfmigrate HCL
+│   ├── code-rewriter.ts        Low-level ARN rewrite utilities
+│   └── cut-finder.ts           Cross-namespace edge detection
+├── reporter/         Markdown report + visualization generation
+│   ├── markdown-reporter.ts    Report orchestration + public interface
+│   ├── detect-patterns.ts      Anti-pattern detection logic
+│   ├── mermaid-graphs.ts       Mermaid diagram generation
+│   └── graphviz.ts             Graphviz DOT generation (before/after views)
+├── state/            State integration, resource ID resolution, tfmigrate executor
+├── config/           .tf-mover.yaml loader + namespace config builder
+├── presets/          Classification rules (gatekeeper, terralith, spaghetti)
 ├── utils/            Error handling (CliError), logger
-└── test-utils/       Test directory management (setupTestDirectory)
+└── cli.ts            Entry point (command registration only)
 ```
+
+## AI Agent Integration (Claude Code / Kiro)
+
+This project ships with built-in skills and slash commands for AI-assisted workflows.
+
+The `.claude/` directory is auto-discovered by Claude Code, and `.kiro/` by Kiro CLI. No extra configuration needed.
+
+| Command | What It Does |
+|---|---|
+| `/analyze` | Scan repos, detect anti-patterns, generate diagnosis report |
+| `/migrate` | Full code migration with preview diffs |
+| `/init-config` | Generate `.tf-mover.yaml` from your repo naming conventions |
+
+The `tf-state-mover` skill activates automatically when you describe a Terraform refactoring problem.
 
 ## Development
 
 ```bash
-pnpm test         # 215 tests, co-located with source
-pnpm lint         # type check
+pnpm test         # 403 tests, co-located with source
+pnpm lint         # tsc --noEmit + ESLint
 pnpm build        # compile
-pnpm demo         # run all 8 scenarios
+pnpm demo         # run all 9 scenarios
 ```
-
-### Test Structure
 
 Tests are co-located with their implementation (e.g., `src/parser/hcl-parser.test.ts` next to `src/parser/hcl-parser.ts`). Integration tests remain in `tests/integration/`.
 
@@ -225,7 +270,7 @@ Tests are co-located with their implementation (e.g., `src/parser/hcl-parser.tes
 
 1. Create `src/presets/{name}.ts` with a `NamespaceConfig` export
 2. Add the preset name to `VALID_PRESETS` in `src/utils/error.ts`
-3. Wire it in `resolvePresetConfig()` in `src/cli.ts`
+3. Wire it in `resolvePresetConfig()` in `src/commands/shared.ts`
 4. Add tests in `src/presets/{name}.test.ts`
 
 ## License

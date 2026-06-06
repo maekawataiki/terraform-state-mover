@@ -1,10 +1,26 @@
-import { readFile, readdir, stat } from "node:fs/promises";
-import { join, relative, basename, dirname } from "node:path";
-import type { TerraformBlock, ParsedFile } from "../types.js";
+import { readFile, readdir, stat, realpath } from "node:fs/promises";
+import { join, basename } from "node:path";
+import { parse as hcl2jsonParse } from "@cdktf/hcl2json";
+import type { TerraformBlock, ParsedFile, ParseWarning } from "../types.js";
+import { ARN_PATTERN_SIMPLE } from "../analyzer/arn-detector.js";
+import { CliError } from "../utils/error.js";
 
-const ARN_PATTERN = /arn:aws:[a-z0-9-]+:[a-z0-9-]*:[0-9]*:[a-zA-Z0-9/_.\-:*]+/g;
 const STRING_LITERAL_PATTERN = /"([^"\\]*(\\.[^"\\]*)*)"/g;
-const BLOCK_PATTERN = /^(resource|data|variable|locals|module)\s+"([^"]*)"(?:\s+"([^"]*)")?\s*\{/gm;
+// `locals` takes no labels; the other block types take one or two quoted labels.
+const BLOCK_PATTERN = /^(?:(resource|data|variable|module)\s+"([^"]*)"(?:\s+"([^"]*)")?|(locals))\s*\{/gm;
+
+/** Normalize a BLOCK_PATTERN match into (type, resourceType, name). */
+function blockMatchParts(match: RegExpExecArray): { blockType: TerraformBlock["type"]; resourceType: string; name: string } {
+  if (match[4]) {
+    // Label-less locals block
+    return { blockType: "locals", resourceType: "locals", name: "locals" };
+  }
+  return {
+    blockType: match[1] as TerraformBlock["type"],
+    resourceType: match[2],
+    name: match[3] || match[2],
+  };
+}
 
 /**
  * Strip single-line (#, //) and multi-line block comments from HCL content.
@@ -20,10 +36,14 @@ export function stripComments(content: string): string {
       const start = i;
       i++;
       while (i < content.length && content[i] !== '"') {
-        if (content[i] === "\\") i++; // skip escaped char
-        i++;
+        if (content[i] === "\\") {
+          i++; // skip backslash
+          if (i < content.length) i++; // skip escaped char
+        } else {
+          i++;
+        }
       }
-      i++; // closing quote
+      if (i < content.length) i++; // closing quote
       result.push(content.slice(start, i));
       continue;
     }
@@ -67,11 +87,13 @@ export function stripComments(content: string): string {
  * Replaces content with whitespace to preserve line numbers.
  */
 export function stripHeredocs(content: string): string {
-  const heredocPattern = /<<-?\s*([A-Z_][A-Z0-9_]*)\s*\n/g;
+  const heredocPattern = /<<-?\s*([A-Za-z_][A-Za-z0-9_]*)\s*\n/g;
   let result = content;
-  let match: RegExpExecArray | null;
 
   // Need to iterate carefully since we modify the string
+  // Reset lastIndex each iteration since result string is being mutated
+  heredocPattern.lastIndex = 0;
+  let match: RegExpExecArray | null;
   while ((match = heredocPattern.exec(result)) !== null) {
     const marker = match[1];
     const startIndex = match.index;
@@ -88,8 +110,11 @@ export function stripHeredocs(content: string): string {
       // Replace with whitespace preserving newlines
       const replacement = heredocContent.replace(/[^\n]/g, " ");
       result = result.slice(0, startIndex) + replacement + result.slice(endIndex);
-      // Reset regex since we modified the string
+      // Reset lastIndex to continue scanning after the replaced content
       heredocPattern.lastIndex = startIndex + replacement.length;
+    } else {
+      // No closing marker found — skip past this match to avoid infinite loop
+      heredocPattern.lastIndex = bodyStart;
     }
   }
 
@@ -105,23 +130,47 @@ export function preprocessHcl(content: string): string {
 }
 
 export function extractArns(text: string): string[] {
-  return [...text.matchAll(ARN_PATTERN)].map((m) => m[0]);
+  return [...text.matchAll(ARN_PATTERN_SIMPLE)].map((m) => m[0]);
 }
 
 export function extractStringLiterals(text: string): string[] {
   return [...text.matchAll(STRING_LITERAL_PATTERN)].map((m) => m[1]);
 }
 
-function findMatchingBrace(text: string, startIndex: number): number {
+export function findMatchingBrace(text: string, startIndex: number, filePath?: string): number {
   let depth = 0;
-  for (let i = startIndex; i < text.length; i++) {
-    if (text[i] === "{") depth++;
-    else if (text[i] === "}") {
+  let i = startIndex;
+  while (i < text.length) {
+    const ch = text[i];
+    // Skip over double-quoted strings (don't count braces inside them)
+    if (ch === '"') {
+      i++;
+      while (i < text.length && text[i] !== '"') {
+        if (text[i] === "\\") {
+          i++; // skip backslash
+          if (i < text.length) i++; // skip escaped char
+        } else {
+          i++;
+        }
+      }
+      // Skip closing quote
+      if (i < text.length) i++;
+      continue;
+    }
+    if (ch === "{") depth++;
+    else if (ch === "}") {
       depth--;
       if (depth === 0) return i;
     }
+    i++;
   }
-  return text.length - 1;
+  const context = filePath ? ` in ${filePath}` : "";
+  const snippet = text.slice(startIndex, startIndex + 60).replace(/\n/g, "\\n");
+  throw new CliError(
+    `Unmatched brace${context} at offset ${startIndex} (depth=${depth}). ` +
+    `Block starts with: "${snippet}...". ` +
+    `This usually indicates malformed HCL. Fix the syntax or exclude this file.`,
+  );
 }
 
 export function parseHcl(content: string, filePath: string, repo: string): TerraformBlock[] {
@@ -133,11 +182,9 @@ export function parseHcl(content: string, filePath: string, repo: string): Terra
   const cleaned = preprocessHcl(content);
 
   while ((match = pattern.exec(cleaned)) !== null) {
-    const blockType = match[1] as TerraformBlock["type"];
-    const resourceType = match[2];
-    const name = match[3] || match[2];
+    const { blockType, resourceType, name } = blockMatchParts(match);
     const braceStart = cleaned.indexOf("{", match.index + match[0].length - 1);
-    const braceEnd = findMatchingBrace(cleaned, braceStart);
+    const braceEnd = findMatchingBrace(cleaned, braceStart, filePath);
     const body = cleaned.slice(braceStart, braceEnd + 1);
     const stringLiterals = extractStringLiterals(body);
     const arns = extractArns(body);
@@ -156,32 +203,353 @@ export function parseHcl(content: string, filePath: string, repo: string): Terra
   return blocks;
 }
 
-export async function parseTfFile(filePath: string, repo: string): Promise<ParsedFile> {
-  const content = await readFile(filePath, "utf-8");
-  return {
-    filePath,
-    repo,
-    blocks: parseHcl(content, filePath, repo),
-  };
+
+// ─── AST-based parser using @cdktf/hcl2json (Wasm) ───
+
+/**
+ * Recursively extract all string values from a nested JSON structure.
+ * Used to find ARNs and string literals deep within parsed HCL.
+ * Skips multi-line strings (likely heredocs / JSON policies) to avoid false-positive ARN detection.
+ */
+function collectStringsFromJson(obj: unknown, opts?: { skipMultiline?: boolean }): string[] {
+  const strings: string[] = [];
+  const skipMultiline = opts?.skipMultiline ?? false;
+
+  function walk(value: unknown): void {
+    if (typeof value === "string") {
+      if (skipMultiline && value.includes("\n")) return;
+      strings.push(value);
+    } else if (Array.isArray(value)) {
+      for (const item of value) walk(item);
+    } else if (value !== null && typeof value === "object") {
+      for (const v of Object.values(value as Record<string, unknown>)) walk(v);
+    }
+  }
+
+  walk(obj);
+  return strings;
 }
 
-export async function scanDirectory(dirPath: string, repo?: string): Promise<ParsedFile[]> {
-  const repoName = repo || basename(dirPath);
-  const results: ParsedFile[] = [];
+/**
+ * Parse HCL content using @cdktf/hcl2json (Go HCL parser compiled to Wasm).
+ * Returns TerraformBlock[] compatible with the rest of the pipeline.
+ */
+export async function parseHclAst(content: string, filePath: string, repo: string): Promise<TerraformBlock[]> {
+  const json = await hcl2jsonParse(filePath, content);
+  const blocks: TerraformBlock[] = [];
 
-  async function walk(dir: string): Promise<void> {
-    const entries = await readdir(dir);
-    for (const entry of entries) {
-      const full = join(dir, entry);
-      const s = await stat(full);
-      if (s.isDirectory() && entry !== ".terraform" && entry !== "node_modules") {
-        await walk(full);
-      } else if (entry.endsWith(".tf")) {
-        results.push(await parseTfFile(full, repoName));
+  // Process resource blocks: { resource: { aws_vpc: { main: [{...}] } } }
+  if (json.resource) {
+    for (const [resourceType, instances] of Object.entries(json.resource as Record<string, Record<string, unknown[]>>)) {
+      for (const [name, configs] of Object.entries(instances)) {
+        const body = JSON.stringify(configs);
+        const allStrings = collectStringsFromJson(configs, { skipMultiline: true });
+        const arns = allStrings.flatMap((s) => extractArns(s));
+        const stringLiterals = allStrings.filter((s) => !s.startsWith("${"));
+
+        blocks.push({
+          type: "resource",
+          resourceType,
+          name,
+          body,
+          stringLiterals,
+          arns,
+          filePath,
+          repo,
+        });
       }
     }
   }
 
-  await walk(dirPath);
+  // Process data blocks: { data: { terraform_remote_state: { network: [{...}] } } }
+  if (json.data) {
+    for (const [resourceType, instances] of Object.entries(json.data as Record<string, Record<string, unknown[]>>)) {
+      for (const [name, configs] of Object.entries(instances)) {
+        const body = JSON.stringify(configs);
+        const allStrings = collectStringsFromJson(configs, { skipMultiline: true });
+        const arns = allStrings.flatMap((s) => extractArns(s));
+        const stringLiterals = allStrings.filter((s) => !s.startsWith("${"));
+
+        blocks.push({
+          type: "data",
+          resourceType,
+          name,
+          body,
+          stringLiterals,
+          arns,
+          filePath,
+          repo,
+        });
+      }
+    }
+  }
+
+  // Process variable blocks: { variable: { name: [{...}] } }
+  if (json.variable) {
+    for (const [name, configs] of Object.entries(json.variable as Record<string, unknown[]>)) {
+      const body = JSON.stringify(configs);
+      blocks.push({
+        type: "variable",
+        resourceType: "variable",
+        name,
+        body,
+        stringLiterals: collectStringsFromJson(configs).filter((s) => !s.startsWith("${")),
+        arns: [],
+        filePath,
+        repo,
+      });
+    }
+  }
+
+  // Process module blocks: { module: { name: [{...}] } }
+  if (json.module) {
+    for (const [name, configs] of Object.entries(json.module as Record<string, unknown[]>)) {
+      const body = JSON.stringify(configs);
+      const allStrings = collectStringsFromJson(configs);
+      const arns = allStrings.flatMap((s) => extractArns(s));
+
+      blocks.push({
+        type: "module",
+        resourceType: "module",
+        name,
+        body,
+        stringLiterals: allStrings.filter((s) => !s.startsWith("${")),
+        arns,
+        filePath,
+        repo,
+      });
+    }
+  }
+
+  // Process locals blocks: { locals: [{...}] }
+  if (json.locals) {
+    const configs = json.locals as unknown[];
+    const body = JSON.stringify(configs);
+    const allStrings = collectStringsFromJson(configs);
+    const arns = allStrings.flatMap((s) => extractArns(s));
+
+    blocks.push({
+      type: "locals",
+      resourceType: "locals",
+      name: "locals",
+      body,
+      stringLiterals: allStrings.filter((s) => !s.startsWith("${")),
+      arns,
+      filePath,
+      repo,
+    });
+  }
+
+  return blocks;
+}
+
+// ─── Parser limitation detection (still useful for user awareness) ───
+
+/**
+ * Count net brace depth change on a line, skipping braces inside string literals.
+ */
+function countBraceDelta(line: string): number {
+  let delta = 0;
+  let inString = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"' && (i === 0 || line[i - 1] !== '\\')) {
+      inString = !inString;
+    } else if (!inString) {
+      if (ch === '{') delta++;
+      else if (ch === '}') delta--;
+    }
+  }
+  return delta;
+}
+
+export function detectParserLimitations(content: string, filePath: string): ParseWarning[] {
+  const warnings: ParseWarning[] = [];
+  const lines = content.split("\n");
+
+  // Track block nesting depth to distinguish resource-level for_each from dynamic block for_each
+  let blockDepth = 0;
+  let insideResourceBlock = false; // true when inside a resource/data/module top-level block
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const lineNum = i + 1;
+    const trimmed = line.trim();
+
+    // Detect top-level block starts (before any braces on this line are counted)
+    if (blockDepth === 0 && /^(resource|data|module)\s+"/.test(trimmed)) {
+      insideResourceBlock = true;
+    }
+
+    // Capture depth before applying this line's brace changes
+    const depthBeforeLine = blockDepth;
+
+    // Track brace depth (simplified — not inside strings, good enough for warnings)
+    const braceDelta = countBraceDelta(line);
+    blockDepth += braceDelta;
+
+    // Reset when we exit the top-level block
+    if (blockDepth === 0) {
+      insideResourceBlock = false;
+    }
+
+    // templatefile — even with AST parser, we can't scan external template files
+    if (/templatefile\s*\(/.test(line)) {
+      warnings.push({
+        filePath,
+        line: lineNum,
+        message: "templatefile() call — ARN references in template files are not scanned",
+        severity: "warning",
+      });
+    }
+
+    // for_each / count at resource level (depthBeforeLine === 1 means the line starts directly inside the top-level block)
+    if (insideResourceBlock && depthBeforeLine === 1) {
+      if (/^\s*for_each\s*=/.test(line)) {
+        warnings.push({
+          filePath,
+          line: lineNum,
+          message: "for_each resource — state addresses use key-based indexing (e.g. resource[\"key\"]). Migration may require per-instance move commands.",
+          severity: "warning",
+        });
+      }
+      if (/^\s*count\s*=/.test(line)) {
+        warnings.push({
+          filePath,
+          line: lineNum,
+          message: "count resource — state addresses use numeric indexing (e.g. resource[0]). Migration may require per-instance move commands.",
+          severity: "warning",
+        });
+      }
+    }
+
+    // Interpolated ARNs — cannot be statically resolved or rewritten
+    if (/arn:(?:aws|aws-cn|aws-us-gov):[^"]*\$\{/.test(line) || /\$\{[^}]*arn:(?:aws|aws-cn|aws-us-gov):/.test(line)) {
+      warnings.push({
+        filePath,
+        line: lineNum,
+        message: "Interpolated ARN detected — contains ${...} expressions. Cannot be statically resolved or auto-rewritten.",
+        severity: "warning",
+      });
+    }
+  }
+
+  return warnings;
+}
+
+// ─── Lightweight raw body extraction (no ARN/string parsing) ───
+
+/**
+ * Extract raw HCL block bodies from content using regex + brace matching.
+ * Lighter than full parseHcl — only finds block boundaries, no ARN/string extraction.
+ */
+function extractRawBodies(content: string, filePath: string): Map<string, string> {
+  const cleaned = preprocessHcl(content);
+  const map = new Map<string, string>();
+  const pattern = new RegExp(BLOCK_PATTERN.source, "gm");
+  let match: RegExpExecArray | null;
+
+  while ((match = pattern.exec(cleaned)) !== null) {
+    const { blockType, resourceType, name } = blockMatchParts(match);
+    const braceStart = cleaned.indexOf("{", match.index + match[0].length - 1);
+    try {
+      const braceEnd = findMatchingBrace(cleaned, braceStart, filePath);
+      const body = cleaned.slice(braceStart, braceEnd + 1);
+      const key = `${blockType}.${resourceType}.${name}`;
+      map.set(key, body);
+    } catch {
+      // Skip malformed blocks
+    }
+  }
+
+  return map;
+}
+
+// ─── Public API (uses AST parser with regex fallback) ───
+
+/**
+ * Parse a single .tf file. Uses @cdktf/hcl2json for accurate AST parsing,
+ * falls back to regex parser if Wasm fails.
+ */
+export async function parseTfFile(filePath: string, repo: string): Promise<ParsedFile> {
+  const content = await readFile(filePath, "utf-8");
+  const warnings = detectParserLimitations(content, filePath);
+
+  let blocks: TerraformBlock[];
+  try {
+    blocks = await parseHclAst(content, filePath, repo);
+    // Enrich with rawBody for pattern matching in reporters (lightweight, no full regex parse)
+    const rawBodies = extractRawBodies(content, filePath);
+    for (const block of blocks) {
+      const key = `${block.type}.${block.resourceType}.${block.name}`;
+      block.rawBody = rawBodies.get(key);
+    }
+  } catch {
+    // Fallback to regex parser if AST parser fails (e.g., syntax errors in HCL)
+    blocks = parseHcl(content, filePath, repo);
+    warnings.push({
+      filePath,
+      line: 0,
+      message: "AST parser failed, fell back to regex parser — some patterns may not be detected",
+      severity: "warning",
+    });
+  }
+
+  return {
+    filePath,
+    repo,
+    blocks,
+    warnings: warnings.length > 0 ? warnings : undefined,
+  };
+}
+
+// ─── Concurrency limiter ───
+
+async function parallelLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let index = 0;
+
+  async function worker(): Promise<void> {
+    while (index < items.length) {
+      const i = index++;
+      results[i] = await fn(items[i]);
+    }
+  }
+
+  const workers = Array.from({ length: Math.min(limit, items.length) }, () => worker());
+  await Promise.all(workers);
+  return results;
+}
+
+/**
+ * Scan a directory for .tf files and parse them all.
+ * Uses symlink loop detection and parallel file parsing (max 10 concurrent).
+ */
+export async function scanDirectory(dirPath: string, repo?: string): Promise<ParsedFile[]> {
+  const repoName = repo || basename(dirPath);
+  const tfFiles: string[] = [];
+  const visitedDirs = new Set<string>();
+
+  async function collectFiles(dir: string): Promise<void> {
+    const realDir = await realpath(dir);
+    if (visitedDirs.has(realDir)) return;
+    visitedDirs.add(realDir);
+
+    const entries = await readdir(dir);
+    for (const entry of entries) {
+      if (entry === ".terraform" || entry === "node_modules") continue;
+      const full = join(dir, entry);
+      const s = await stat(full);
+      if (s.isDirectory()) {
+        await collectFiles(full);
+      } else if (entry.endsWith(".tf")) {
+        tfFiles.push(full);
+      }
+    }
+  }
+
+  await collectFiles(dirPath);
+
+  const results = await parallelLimit(tfFiles, 10, (filePath) => parseTfFile(filePath, repoName));
   return results;
 }

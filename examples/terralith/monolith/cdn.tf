@@ -23,7 +23,9 @@ resource "aws_cloudfront_distribution" "main" {
 resource "aws_wafv2_web_acl" "main" {
   name  = "prod-waf"
   scope = "CLOUDFRONT"
-  default_action { allow {} }
+  default_action {
+    allow {}
+  }
   visibility_config {
     cloudwatch_metrics_enabled = true
     metric_name                = "prod-waf"

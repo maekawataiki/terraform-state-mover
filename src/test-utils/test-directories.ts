@@ -1,6 +1,5 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
 
 const TEST_BASE_DIR = join(process.cwd(), "tmp", "tests");
 

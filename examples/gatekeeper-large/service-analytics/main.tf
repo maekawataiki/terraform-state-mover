@@ -3,6 +3,7 @@ resource "aws_lambda_function" "analytics_ingest" {
   role          = "arn:aws:iam::111111111111:role/analytics-service-lambda"
   handler       = "index.handler"
   runtime       = "python3.11"
+  filename      = "lambda.zip"
 }
 
 resource "aws_lambda_function" "analytics_transform" {
@@ -10,6 +11,7 @@ resource "aws_lambda_function" "analytics_transform" {
   role          = "arn:aws:iam::111111111111:role/analytics-service-lambda"
   handler       = "transform.handler"
   runtime       = "python3.11"
+  filename      = "lambda.zip"
 }
 
 resource "aws_s3_bucket" "data_lake" {

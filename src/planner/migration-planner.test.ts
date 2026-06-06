@@ -78,7 +78,7 @@ describe("topologicalSort", () => {
 });
 
 describe("buildResourceIdMap", () => {
-  it("maps repo:address to ARN", () => {
+  it("maps repo:address to resource ID", () => {
     const stateFiles: StateFile[] = [{
       repo: "infra",
       resources: [
@@ -86,10 +86,10 @@ describe("buildResourceIdMap", () => {
       ],
     }];
     const map = buildResourceIdMap(stateFiles);
-    expect(map.get("infra:aws_iam_role.worker")).toBe("arn:aws:iam::123:role/worker");
+    expect(map.get("infra:aws_iam_role.worker")).toBe("worker");
   });
 
-  it("prefers ARN over ID", () => {
+  it("prefers ID over ARN (import uses terraform resource ID)", () => {
     const stateFiles: StateFile[] = [{
       repo: "app",
       resources: [
@@ -97,7 +97,7 @@ describe("buildResourceIdMap", () => {
       ],
     }];
     const map = buildResourceIdMap(stateFiles);
-    expect(map.get("app:aws_s3_bucket.data")).toBe("arn:aws:s3:::my-bucket");
+    expect(map.get("app:aws_s3_bucket.data")).toBe("my-bucket");
   });
 
   it("falls back to id when no ARN", () => {

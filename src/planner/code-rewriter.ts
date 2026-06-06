@@ -1,4 +1,29 @@
+import { createTwoFilesPatch } from "diff";
 import type { ArnReference, CodeDiff, RewriteResult } from "../types.js";
+
+/**
+ * Sanitize a string into a valid Terraform/HCL identifier.
+ * HCL identifiers must start with a letter or underscore, and contain only letters, digits, underscores, and hyphens.
+ * We replace all invalid characters with underscores, collapse consecutive underscores, strip leading digits,
+ * and ensure a leading letter or underscore.
+ */
+export function sanitizeTfIdentifier(raw: string): string {
+  // Replace all non-alphanumeric/underscore characters with underscore
+  let result = raw.replace(/[^a-zA-Z0-9_]/g, "_");
+  // Collapse consecutive underscores
+  result = result.replace(/_+/g, "_");
+  // Strip leading/trailing underscores
+  result = result.replace(/^_+|_+$/g, "");
+  // If it starts with a digit, prefix with underscore
+  if (/^[0-9]/.test(result)) {
+    result = `_${result}`;
+  }
+  // Fallback if empty
+  if (result === "") {
+    result = "resource";
+  }
+  return result;
+}
 
 export function arnToDataSource(arn: string, service: string, name: string): string {
   const dataSourceType = getDataSourceType(service);
@@ -27,20 +52,72 @@ function getDataSourceReference(service: string, name: string): string {
   return `data.${getDataSourceType(service)}.${name}.arn`;
 }
 
-export function generateUnifiedDiff(filePath: string, original: string, modified: string): string {
-  const origLines = original.split("\n");
-  const modLines = modified.split("\n");
-  const lines = [`--- a/${filePath}`, `+++ b/${filePath}`];
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
-  for (let i = 0; i < Math.max(origLines.length, modLines.length); i++) {
-    if (origLines[i] !== modLines[i]) {
-      lines.push(`@@ -${i + 1},1 +${i + 1},1 @@`);
-      if (origLines[i] !== undefined) lines.push(`-${origLines[i]}`);
-      if (modLines[i] !== undefined) lines.push(`+${modLines[i]}`);
+// A match followed by one of these characters is a name-token continuation
+// (".../role/App" inside ".../role/AppV2") and must not be replaced.
+// Segment/path characters like "/" or "*" are NOT included: replacing a
+// bucket ARN inside "arn:...:my-bucket/*" → "${var.bucket_arn}/*" is correct.
+const TOKEN_CONTINUATION = /[a-zA-Z0-9_-]/;
+
+/**
+ * Replace every occurrence of an ARN in content, handling both exact-match and
+ * interpolation contexts.
+ *
+ * - Exact match: `"arn:aws:..."` → bare reference (e.g., `var.xxx_arn`)
+ * - Interpolation: ARN embedded in a larger string → `${var.xxx_arn}` form
+ *
+ * Occurrences where the ARN is followed by another ARN character (e.g. the
+ * target is a prefix of a longer ARN) are left untouched.
+ */
+export function replaceArnInContent(
+  content: string,
+  arn: string,
+  replacement: string,
+): { content: string; replacements: number } {
+  const pattern = new RegExp(escapeRegExp(arn), "g");
+  let result = "";
+  let lastIndex = 0;
+  let replacements = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = pattern.exec(content)) !== null) {
+    const start = match.index;
+    const end = start + arn.length;
+    const nextChar = content[end];
+
+    // Boundary check: skip if this is a prefix of a longer name token
+    if (nextChar !== undefined && TOKEN_CONTINUATION.test(nextChar)) continue;
+
+    const prevChar = start > 0 ? content[start - 1] : undefined;
+    if (prevChar === '"' && nextChar === '"') {
+      // Entire quoted string is the ARN → bare reference, drop the quotes
+      result += content.slice(lastIndex, start - 1) + replacement;
+      lastIndex = end + 1;
+    } else {
+      // Embedded in a larger string → interpolation
+      result += content.slice(lastIndex, start) + `\${${replacement}}`;
+      lastIndex = end;
     }
+    replacements++;
   }
 
-  return lines.join("\n");
+  result += content.slice(lastIndex);
+  return { content: result, replacements };
+}
+
+export function generateUnifiedDiff(filePath: string, original: string, modified: string): string {
+  return createTwoFilesPatch(
+    `a/${filePath}`,
+    `b/${filePath}`,
+    original,
+    modified,
+    "",
+    "",
+    { context: 3 },
+  );
 }
 
 export function rewriteArns(
@@ -52,22 +129,33 @@ export function rewriteArns(
   let modified = content;
   const variableDeclarations: string[] = [];
   const dataSourceDeclarations: string[] = [];
+  let arnsRewritten = 0;
+  const seenArns = new Set<string>();
 
   for (const ref of arnRefs) {
-    const arnPath = ref.arn.split(":").pop() || "resource";
-    const safeName = `${ref.service}_${arnPath.replace(/[^a-zA-Z0-9]/g, "_")}`;
+    // The same ARN may be referenced multiple times; rewrite (and declare) once
+    if (seenArns.has(ref.arn)) continue;
+    seenArns.add(ref.arn);
 
+    const arnPath = ref.arn.split(":").pop() || "resource";
+    const safeName = sanitizeTfIdentifier(`${ref.service}_${arnPath}`);
+
+    let replaced: { content: string; replacements: number };
     if (mode === "data_source") {
       const replacement = getDataSourceReference(ref.service, safeName);
-      // TODO: Handle interpolation context - if ARN is part of a larger string,
-      // use "${replacement}" interpolation instead of bare reference
-      modified = modified.replace(`"${ref.arn}"`, replacement);
-      dataSourceDeclarations.push(arnToDataSource(ref.arn, ref.service, safeName));
+      replaced = replaceArnInContent(modified, ref.arn, replacement);
+      if (replaced.replacements > 0) {
+        dataSourceDeclarations.push(arnToDataSource(ref.arn, ref.service, safeName));
+      }
     } else {
       const varName = `${safeName}_arn`;
-      modified = modified.replace(`"${ref.arn}"`, `var.${varName}`);
-      variableDeclarations.push(arnToVariable(ref.arn, safeName));
+      replaced = replaceArnInContent(modified, ref.arn, `var.${varName}`);
+      if (replaced.replacements > 0) {
+        variableDeclarations.push(arnToVariable(ref.arn, safeName));
+      }
     }
+    modified = replaced.content;
+    arnsRewritten += replaced.replacements;
   }
 
   const diffs: CodeDiff[] = [];
@@ -80,5 +168,5 @@ export function rewriteArns(
     });
   }
 
-  return { diffs, variableDeclarations, dataSourceDeclarations };
+  return { diffs, variableDeclarations, dataSourceDeclarations, arnsRewritten };
 }

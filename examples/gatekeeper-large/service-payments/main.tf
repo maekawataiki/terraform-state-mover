@@ -3,6 +3,7 @@ resource "aws_lambda_function" "payment_handler" {
   role          = "arn:aws:iam::111111111111:role/payment-service-lambda"
   handler       = "index.handler"
   runtime       = "nodejs18.x"
+  filename      = "lambda.zip"
 }
 
 resource "aws_lambda_function" "payment_webhook" {
@@ -10,6 +11,7 @@ resource "aws_lambda_function" "payment_webhook" {
   role          = "arn:aws:iam::111111111111:role/payment-service-lambda"
   handler       = "webhook.handler"
   runtime       = "nodejs18.x"
+  filename      = "lambda.zip"
 }
 
 resource "aws_sqs_queue" "payment_events" {

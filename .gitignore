@@ -4,3 +4,6 @@ output/
 tmp/
 *.tsbuildinfo
 .DS_Store
+.terraform/
+.terraform.lock.hcl
+lambda.zip

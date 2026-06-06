@@ -1,5 +1,4 @@
 import { stat } from "node:fs/promises";
-import { join } from "node:path";
 
 /**
  * Custom error class for CLI errors that should be displayed to the user
@@ -34,7 +33,7 @@ export function formatError(error: unknown): string {
 }
 
 /** Available preset names */
-const VALID_PRESETS = ["gatekeeper"] as const;
+const VALID_PRESETS = ["gatekeeper", "terralith", "spaghetti"] as const;
 export type PresetName = (typeof VALID_PRESETS)[number];
 
 /**

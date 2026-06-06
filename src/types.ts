@@ -3,16 +3,25 @@ export interface TerraformBlock {
   resourceType: string;
   name: string;
   body: string;
+  rawBody?: string;
   stringLiterals: string[];
   arns: string[];
   filePath: string;
   repo: string;
 }
 
+export interface ParseWarning {
+  filePath: string;
+  line: number;
+  message: string;
+  severity: "info" | "warning";
+}
+
 export interface ParsedFile {
   filePath: string;
   repo: string;
   blocks: TerraformBlock[];
+  warnings?: ParseWarning[];
 }
 
 export interface ArnReference {
@@ -64,6 +73,8 @@ export interface NamespaceConfig {
   overrides?: ClassificationOverride[];
   customClassifier?: (node: GraphNode) => Namespace | null;
   groupByRepo?: boolean;
+  /** Custom importance scores for cut-finder edge prioritization (resource_type → score). */
+  importanceScores?: Record<string, number>;
 }
 
 export interface CutEdge {
@@ -100,4 +111,78 @@ export interface RewriteResult {
   diffs: CodeDiff[];
   variableDeclarations: string[];
   dataSourceDeclarations: string[];
+  /** Number of ARN occurrences actually replaced in the content. */
+  arnsRewritten: number;
+}
+
+export interface HclMoveOperation {
+  sourceFilePath: string;
+  targetFilePath: string;
+  block: TerraformBlock;
+  sourceRepo: string;
+  targetRepo: string;
+}
+
+export interface VariableDeclaration {
+  name: string;
+  type: string;
+  description: string;
+  repo: string;
+  filePath: string;
+}
+
+export interface OutputDeclaration {
+  name: string;
+  value: string;
+  description: string;
+  repo: string;
+  filePath: string;
+}
+
+export interface MovedBlock {
+  from: string;
+  to: string;
+  repo: string;
+}
+
+export interface ImportBlock {
+  to: string;
+  id: string;
+  provider?: string;
+  repo: string;
+}
+
+export interface RemovedBlock {
+  from: string;
+  repo: string;
+  destroy: boolean;
+}
+
+export interface FileWrite {
+  filePath: string;
+  content: string;
+  operation: "create" | "modify" | "delete";
+}
+
+export interface MigrationStepError {
+  step: string;
+  error: string;
+}
+
+export interface MigrateResult {
+  moves: HclMoveOperation[];
+  variableDeclarations: VariableDeclaration[];
+  outputDeclarations: OutputDeclaration[];
+  movedBlocks: MovedBlock[];
+  importBlocks: ImportBlock[];
+  removedBlocks: RemovedBlock[];
+  fileWrites: FileWrite[];
+  tfmigrateHcl: string;
+  errors?: MigrationStepError[];
+  summary: {
+    resourcesMoved: number;
+    arnsRewritten: number;
+    outputsGenerated: number;
+    filesModified: number;
+  };
 }

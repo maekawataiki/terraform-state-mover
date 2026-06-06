@@ -3,6 +3,7 @@ resource "aws_lambda_function" "search_api" {
   role          = "arn:aws:iam::111111111111:role/search-service-lambda"
   handler       = "index.handler"
   runtime       = "nodejs18.x"
+  filename      = "lambda.zip"
 }
 
 resource "aws_opensearch_domain" "main" {

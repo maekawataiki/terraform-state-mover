@@ -1,10 +1,20 @@
 import type { ParsedFile, ArnReference, GraphNode } from "../types.js";
 import { buildNodeId } from "./dependency-graph.js";
+import { getOrCreate } from "../utils/map-utils.js";
 
-const ARN_PATTERN = /arn:aws:([a-z0-9-]+):[a-z0-9-]*:[0-9]*:[a-zA-Z0-9/_.\-:*]+/g;
+/**
+ * Canonical ARN regex pattern used throughout the project.
+ * All ARN detection should use this single source of truth.
+ */
+export const ARN_PATTERN = /arn:(?:aws|aws-cn|aws-us-gov):([a-z0-9-]+):[a-z0-9-]*:[0-9]*:[a-zA-Z0-9/_.\-:*]+/g;
+
+/**
+ * Non-capturing version for simple ARN extraction (no service group).
+ */
+export const ARN_PATTERN_SIMPLE = /arn:(?:aws|aws-cn|aws-us-gov):[a-z0-9-]+:[a-z0-9-]*:[0-9]*:[a-zA-Z0-9/_.\-:*]+/g;
 
 export function classifyArnService(arn: string): string {
-  const match = arn.match(/^arn:aws:([a-z0-9-]+):/);
+  const match = arn.match(/^arn:(?:aws|aws-cn|aws-us-gov):([a-z0-9-]+):/);
   return match ? match[1] : "unknown";
 }
 
@@ -57,8 +67,7 @@ export function getUnresolvedArns(refs: ArnReference[]): ArnReference[] {
 export function groupByService(refs: ArnReference[]): Map<string, ArnReference[]> {
   const groups = new Map<string, ArnReference[]>();
   for (const ref of refs) {
-    if (!groups.has(ref.service)) groups.set(ref.service, []);
-    groups.get(ref.service)!.push(ref);
+    getOrCreate(groups, ref.service, () => []).push(ref);
   }
   return groups;
 }

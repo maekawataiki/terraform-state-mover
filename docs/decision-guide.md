@@ -54,17 +54,21 @@ Week 1: Discovery
   → Share with stakeholders
 
 Week 2: Planning
-  pnpm cli plan <repos> --state-dir ./states -o ./plan
-  → Review migrate.hcl (what moves where)
-  → Pick pilot service (lowest dependency count from report)
+  pnpm cli migrate <repos> --preset gatekeeper --state-dir ./states \
+    --namespace service-orders -o ./output/phase1
+  → Review output/phase1/migrated/ (full file tree preview)
+  → Review output/phase1/diffs/migration.diff
+  → Confirm plan with team
 
 Week 3: Pilot Migration
-  tfmigrate plan ./plan/migrate.hcl    # dry-run
-  tfmigrate apply ./plan/migrate.hcl   # execute
-  terraform plan                        # verify: no changes
+  pnpm cli migrate <repos> --preset gatekeeper --state-dir ./states \
+    --namespace service-orders --apply
+  → TF 1.7+: terraform apply in both repos (import + removed)
+  → Legacy: tfmigrate apply output/migrate.hcl
+  → Verify: terraform plan → no changes
 
 Week 4+: Fleet Rollout
-  → Repeat per service
+  → Repeat per namespace (service-payments, service-auth, ...)
   → Monitor: PRs go to service repos, not central
 ```
 

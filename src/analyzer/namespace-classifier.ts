@@ -1,4 +1,4 @@
-import type { GraphNode, Namespace, NamespaceConfig, ClassificationOverride } from "../types.js";
+import type { GraphNode, Namespace, NamespaceConfig } from "../types.js";
 
 const FOUNDATION_TYPES = [
   "aws_organizations_organization",
@@ -57,10 +57,10 @@ function inferNamespaceFromRepo(repo: string): Namespace | null {
 /**
  * Derive the service namespace name for a repo.
  * Strips common prefixes to produce a clean name.
+ * e.g., "service-orders" → "service-orders" (not "service-service-orders")
  */
 function repoToServiceNamespace(repo: string): Namespace {
-  // Already has service- prefix? Use as-is
-  if (repo.startsWith("service-")) return `service-${repo.slice(8)}` as Namespace;
+  if (repo.startsWith("service-")) return repo as Namespace;
   if (repo.startsWith("svc-")) return `service-${repo.slice(4)}` as Namespace;
   if (repo.startsWith("app-")) return `service-${repo.slice(4)}` as Namespace;
   return `service-${repo}`;

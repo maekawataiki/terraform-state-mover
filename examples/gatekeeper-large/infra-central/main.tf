@@ -134,4 +134,7 @@ resource "aws_subnet" "public_a" {
 resource "aws_eks_cluster" "main" {
   name     = "production"
   role_arn = aws_iam_role.eks_cluster_role.arn
+  vpc_config {
+    subnet_ids = [aws_subnet.private_a.id, aws_subnet.private_b.id]
+  }
 }

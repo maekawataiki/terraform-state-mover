@@ -16,12 +16,21 @@
     "./planner/migration-planner": "./dist/planner/migration-planner.js",
     "./planner/cut-finder": "./dist/planner/cut-finder.js",
     "./planner/code-rewriter": "./dist/planner/code-rewriter.js",
+    "./planner/hcl-migrator": "./dist/planner/hcl-migrator.js",
+    "./planner/hcl-block-mover": "./dist/planner/hcl-block-mover.js",
+    "./planner/arn-rewriter": "./dist/planner/arn-rewriter.js",
+    "./planner/output-generator": "./dist/planner/output-generator.js",
+    "./planner/moved-block-generator": "./dist/planner/moved-block-generator.js",
+    "./planner/rollback-generator": "./dist/planner/rollback-generator.js",
     "./reporter/markdown-reporter": "./dist/reporter/markdown-reporter.js",
     "./presets/gatekeeper": "./dist/presets/gatekeeper.js",
+    "./presets/terralith": "./dist/presets/terralith.js",
+    "./presets/spaghetti": "./dist/presets/spaghetti.js",
     "./state/state-reader": "./dist/state/state-reader.js",
     "./state/tfmigrate-executor": "./dist/state/tfmigrate-executor.js",
     "./state/state-differ": "./dist/state/state-differ.js",
-    "./utils/error": "./dist/utils/error.js"
+    "./utils/error": "./dist/utils/error.js",
+    "./config/config-loader": "./dist/config/config-loader.js"
   },
   "bin": {
     "tf-state-mover": "dist/cli.js"
@@ -30,27 +39,40 @@
     "build": "tsc",
     "test": "vitest run",
     "test:watch": "vitest",
-    "lint": "tsc --noEmit",
+    "lint": "tsc --noEmit && eslint src/",
     "cli": "tsx src/cli.ts",
-    "demo:gatekeeper": "tsx src/cli.ts analyze examples/gatekeeper/infra-central examples/gatekeeper/service-app-api examples/gatekeeper/service-app-analytics examples/gatekeeper/infra-platform --preset gatekeeper --state-dir examples/gatekeeper/state -o output/gatekeeper",
-    "demo:terralith": "tsx src/cli.ts analyze examples/terralith/monolith -o output/terralith",
-    "demo:spaghetti": "tsx src/cli.ts analyze examples/spaghetti/network examples/spaghetti/platform examples/spaghetti/services --state-dir examples/spaghetti/state -o output/spaghetti",
-    "demo:cross-account": "tsx src/cli.ts analyze examples/cross-account/multi-account -o output/cross-account",
+    "demo:gatekeeper": "tsx src/cli.ts analyze examples/gatekeeper/infra-central examples/gatekeeper/service-app-api examples/gatekeeper/service-app-analytics examples/gatekeeper/infra-platform --preset gatekeeper --state-dir examples/gatekeeper/state -o output/gatekeeper && tsx src/cli.ts migrate examples/gatekeeper/infra-central examples/gatekeeper/service-app-api examples/gatekeeper/service-app-analytics examples/gatekeeper/infra-platform --preset gatekeeper --state-dir examples/gatekeeper/state -o output/gatekeeper --validate",
+    "demo:gatekeeper-large": "tsx src/cli.ts analyze examples/gatekeeper-large/infra-central examples/gatekeeper-large/service-orders examples/gatekeeper-large/service-payments examples/gatekeeper-large/service-auth examples/gatekeeper-large/service-analytics examples/gatekeeper-large/service-notifications examples/gatekeeper-large/service-search --preset gatekeeper --state-dir examples/gatekeeper-large/state -o output/gatekeeper-large && tsx src/cli.ts migrate examples/gatekeeper-large/infra-central examples/gatekeeper-large/service-orders examples/gatekeeper-large/service-payments examples/gatekeeper-large/service-auth examples/gatekeeper-large/service-analytics examples/gatekeeper-large/service-notifications examples/gatekeeper-large/service-search --preset gatekeeper --state-dir examples/gatekeeper-large/state -o output/gatekeeper-large --validate",
+    "demo:terralith": "tsx src/cli.ts analyze examples/terralith/monolith --preset terralith -o output/terralith && tsx src/cli.ts migrate examples/terralith/monolith --preset terralith -o output/terralith --validate",
+    "demo:spaghetti": "tsx src/cli.ts analyze examples/spaghetti/network examples/spaghetti/platform examples/spaghetti/services --preset spaghetti --state-dir examples/spaghetti/state -o output/spaghetti && tsx src/cli.ts migrate examples/spaghetti/network examples/spaghetti/platform examples/spaghetti/services --preset spaghetti --state-dir examples/spaghetti/state -o output/spaghetti --validate",
+    "demo:cross-account": "tsx src/cli.ts analyze examples/cross-account/multi-account -o output/cross-account && tsx src/cli.ts migrate examples/cross-account/multi-account -o output/cross-account --validate",
     "demo:god-module": "tsx src/cli.ts analyze examples/god-module -o output/god-module",
     "demo:env-copypasta": "tsx src/cli.ts analyze examples/env-copypasta/prod examples/env-copypasta/stg examples/env-copypasta/dev -o output/env-copypasta",
     "demo:count-antipattern": "tsx src/cli.ts analyze examples/count-antipattern -o output/count-antipattern",
     "demo:depends-on-module": "tsx src/cli.ts analyze examples/depends-on-module -o output/depends-on-module",
-    "demo": "pnpm demo:gatekeeper && pnpm demo:terralith && pnpm demo:spaghetti && pnpm demo:cross-account && pnpm demo:god-module && pnpm demo:env-copypasta && pnpm demo:count-antipattern && pnpm demo:depends-on-module && echo 'All demos generated in output/'"
+    "demo": "pnpm demo:gatekeeper && pnpm demo:gatekeeper-large && pnpm demo:terralith && pnpm demo:spaghetti && pnpm demo:cross-account && pnpm demo:god-module && pnpm demo:env-copypasta && pnpm demo:count-antipattern && pnpm demo:depends-on-module && echo 'All demos generated in output/'"
   },
-  "keywords": ["terraform", "migration", "arn", "dependency-graph"],
+  "keywords": [
+    "terraform",
+    "migration",
+    "arn",
+    "dependency-graph"
+  ],
   "license": "MIT",
   "devDependencies": {
+    "@eslint/js": "^9.28.0",
+    "@types/diff": "^8.0.0",
     "@types/node": "22.15.29",
+    "eslint": "^9.28.0",
     "tsx": "4.19.4",
     "typescript": "5.8.3",
+    "typescript-eslint": "^8.34.0",
     "vitest": "3.2.3"
   },
   "dependencies": {
-    "commander": "13.1.0"
+    "@cdktf/hcl2json": "^0.21.0",
+    "commander": "13.1.0",
+    "diff": "^9.0.0",
+    "yaml": "^2.9.0"
   }
 }

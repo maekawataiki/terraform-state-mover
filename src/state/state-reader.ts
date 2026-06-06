@@ -20,11 +20,22 @@ export function parseStateJson(json: string, repo: string): StateFile {
   for (const resource of state.resources ?? []) {
     const type = resource.type as string;
     const name = resource.name as string;
-    const address = `${type}.${name}`;
+    const baseAddress = `${type}.${name}`;
 
     for (const instance of resource.instances ?? []) {
       const attributes = (instance.attributes ?? {}) as Record<string, unknown>;
       const arn = (attributes.arn ?? attributes.id ?? undefined) as string | undefined;
+
+      // Resolve indexed address for count/for_each resources
+      let address = baseAddress;
+      if (instance.index_key !== undefined) {
+        if (typeof instance.index_key === "number") {
+          address = `${baseAddress}[${instance.index_key}]`;
+        } else {
+          address = `${baseAddress}["${instance.index_key}"]`;
+        }
+      }
+
       resources.push({ address, type, name, arn, attributes });
     }
   }

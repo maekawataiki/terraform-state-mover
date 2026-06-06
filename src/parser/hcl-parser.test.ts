@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { writeFile, mkdir } from "node:fs/promises";
+import { writeFile, mkdir, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { setupTestDirectory } from "../test-utils/test-directories.js";
-import { stripComments, stripHeredocs, preprocessHcl, parseHcl, extractArns, extractStringLiterals, parseTfFile, scanDirectory } from "./hcl-parser.js";
+import { stripComments, stripHeredocs, preprocessHcl, parseHcl, extractArns, extractStringLiterals, parseTfFile, scanDirectory, detectParserLimitations } from "./hcl-parser.js";
 
 describe("stripComments", () => {
   it("strips single-line # comments", () => {
@@ -75,6 +75,25 @@ line3`;
     expect(result).not.toContain("Dangling");
     expect(result).toContain("cidr_block");
   });
+
+  it("does not treat hash inside interpolation as comment", () => {
+    const input = `resource "aws_s3_bucket" "main" {
+  bucket = "\${var.name}#suffix"
+}`;
+    const result = stripComments(input);
+    expect(result).toContain("#suffix");
+    expect(result).toContain("${var.name}#suffix");
+  });
+
+  it("handles nested quotes with escapes", () => {
+    const input = `resource "aws_iam_role" "example" {
+  description = "she said \\"hello\\""
+  name = "real-role"
+}`;
+    const result = stripComments(input);
+    expect(result).toContain('she said \\"hello\\"');
+    expect(result).toContain("real-role");
+  });
 });
 
 describe("stripHeredocs", () => {
@@ -137,6 +156,110 @@ line6`;
     const lines = result.split("\n");
     expect(lines).toHaveLength(6);
     expect(lines[5]).toBe("line6");
+  });
+
+  it("strips lowercase heredoc marker", () => {
+    const input = `resource "aws_iam_role" "example" {
+  policy = <<eof
+{
+  "Resource": "arn:aws:iam::123456789012:role/LowercaseHeredoc"
+}
+eof
+  name = "kept"
+}`;
+    const result = stripHeredocs(input);
+    expect(result).not.toContain("LowercaseHeredoc");
+    expect(result).toContain("kept");
+  });
+
+  it("strips mixed case heredoc marker", () => {
+    const input = `resource "aws_iam_role" "example" {
+  policy = <<EoF
+{
+  "Resource": "arn:aws:iam::123456789012:role/MixedCaseHeredoc"
+}
+EoF
+  name = "kept"
+}`;
+    const result = stripHeredocs(input);
+    expect(result).not.toContain("MixedCaseHeredoc");
+    expect(result).toContain("kept");
+  });
+
+  it("strips heredoc marker with digits", () => {
+    const input = `resource "aws_iam_role" "example" {
+  policy = <<EOF2
+{
+  "Resource": "arn:aws:iam::123456789012:role/DigitMarker"
+}
+EOF2
+  name = "kept"
+}`;
+    const result = stripHeredocs(input);
+    expect(result).not.toContain("DigitMarker");
+    expect(result).toContain("kept");
+  });
+
+  it("strips heredoc containing template directives with ARNs", () => {
+    const input = `resource "aws_iam_role" "example" {
+  policy = <<EOF
+{
+  "Statement": [
+    %{ if var.enable_admin }
+    {
+      "Effect": "Allow",
+      "Resource": "arn:aws:iam::123456789012:role/AdminInTemplate"
+    }
+    %{ endif }
+  ]
+}
+EOF
+  name = "kept"
+}`;
+    const result = stripHeredocs(input);
+    expect(result).not.toContain("AdminInTemplate");
+    expect(result).not.toContain("%{ if");
+    expect(result).not.toContain("%{ endif");
+    expect(result).toContain("kept");
+  });
+
+  it("strips multiple separate heredoc blocks in same file", () => {
+    const input = `resource "aws_iam_role" "role_a" {
+  assume_role_policy = <<ASSUME
+{
+  "Resource": "arn:aws:iam::111111111111:role/FirstHeredoc"
+}
+ASSUME
+  name = "role-a"
+}
+
+resource "aws_iam_role" "role_b" {
+  inline_policy = <<INLINE
+{
+  "Resource": "arn:aws:iam::222222222222:role/SecondHeredoc"
+}
+INLINE
+  name = "role-b"
+}`;
+    const result = stripHeredocs(input);
+    expect(result).not.toContain("FirstHeredoc");
+    expect(result).not.toContain("SecondHeredoc");
+    expect(result).toContain("role-a");
+    expect(result).toContain("role-b");
+  });
+
+  it("strips heredoc immediately after = with no space before <<", () => {
+    const input = `resource "aws_iam_role" "example" {
+  policy =<<EOF
+{
+  "Resource": "arn:aws:iam::123456789012:role/NoSpaceHeredoc"
+}
+EOF
+  name = "kept"
+}`;
+    const result = stripHeredocs(input);
+    expect(result).not.toContain("NoSpaceHeredoc");
+    expect(result).toContain("kept");
   });
 });
 
@@ -354,14 +477,15 @@ module "vpc" {
     expect(blocks[0].name).toBe("vpc");
   });
 
-  it("parses locals blocks", () => {
+  it("parses locals blocks (no labels)", () => {
     const hcl = `
-locals "common" {
+locals {
   env = "production"
 }`;
     const blocks = parseHcl(hcl, "locals.tf", "repo1");
     expect(blocks).toHaveLength(1);
     expect(blocks[0].type).toBe("locals");
+    expect(blocks[0].body).toContain("env");
   });
 
   it("extracts ARNs from resource bodies", () => {
@@ -439,6 +563,29 @@ describe("extractArns", () => {
   it("returns empty for no ARNs", () => {
     expect(extractArns("no arns here")).toEqual([]);
   });
+
+  it("extracts aws-cn partition ARNs", () => {
+    const text = `role_arn = "arn:aws-cn:iam::123456789012:role/ChinaRole"`;
+    expect(extractArns(text)).toEqual(["arn:aws-cn:iam::123456789012:role/ChinaRole"]);
+  });
+
+  it("extracts aws-us-gov partition ARNs", () => {
+    const text = `bucket_arn = "arn:aws-us-gov:s3:::gov-bucket"`;
+    expect(extractArns(text)).toEqual(["arn:aws-us-gov:s3:::gov-bucket"]);
+  });
+
+  it("extracts mixed partition ARNs from same text", () => {
+    const text = `
+      role1 = "arn:aws:iam::123456789012:role/Standard"
+      role2 = "arn:aws-cn:iam::123456789012:role/China"
+      role3 = "arn:aws-us-gov:iam::123456789012:role/GovCloud"
+    `;
+    const arns = extractArns(text);
+    expect(arns).toHaveLength(3);
+    expect(arns).toContain("arn:aws:iam::123456789012:role/Standard");
+    expect(arns).toContain("arn:aws-cn:iam::123456789012:role/China");
+    expect(arns).toContain("arn:aws-us-gov:iam::123456789012:role/GovCloud");
+  });
 });
 
 describe("extractStringLiterals", () => {
@@ -508,5 +655,364 @@ describe("scanDirectory", () => {
 
     const results = await scanDirectory(testDir);
     expect(results).toHaveLength(1);
+  });
+});
+
+describe("detectParserLimitations", () => {
+  it("detects templatefile calls", () => {
+    const content = `resource "aws_iam_role" "main" {
+  assume_role_policy = templatefile("policy.tpl", { account_id = var.account_id })
+}`;
+    const warnings = detectParserLimitations(content, "role.tf");
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatchObject({
+      filePath: "role.tf",
+      line: 2,
+      severity: "warning",
+      message: "templatefile() call — ARN references in template files are not scanned",
+    });
+  });
+
+  it("returns empty array for simple HCL", () => {
+    const content = `resource "aws_vpc" "main" {
+  cidr_block = "10.0.0.0/16"
+}`;
+    const warnings = detectParserLimitations(content, "vpc.tf");
+    expect(warnings).toHaveLength(0);
+  });
+
+  it("does not warn on dynamic blocks (handled by AST parser)", () => {
+    const content = `resource "aws_security_group" "main" {
+  dynamic "ingress" {
+    for_each = var.ingress_rules
+    content {
+      from_port = ingress.value.from_port
+    }
+  }
+}`;
+    const warnings = detectParserLimitations(content, "main.tf");
+    expect(warnings).toHaveLength(0);
+  });
+
+  it("warns on for_each (indexed resource needs per-instance moves)", () => {
+    const content = `resource "aws_iam_role" "roles" {
+  for_each = {
+    admin = "arn:aws:iam::123456789012:policy/Admin"
+    read  = "arn:aws:iam::123456789012:policy/Read"
+  }
+}`;
+    const warnings = detectParserLimitations(content, "roles.tf");
+    expect(warnings.some((w) => w.message.includes("for_each"))).toBe(true);
+  });
+
+  it("does not warn on ternary with ARN (handled by AST parser)", () => {
+    const content = `resource "aws_iam_role_policy_attachment" "attach" {
+  policy_arn = var.is_prod ? "arn:aws:iam::123456789012:policy/Prod" : "arn:aws:iam::123456789012:policy/Dev"
+}`;
+    const warnings = detectParserLimitations(content, "attach.tf");
+    expect(warnings).toHaveLength(0);
+  });
+
+  it("detects templatefile but not dynamic-block for_each in mixed file", () => {
+    const content = `resource "aws_security_group" "main" {
+  dynamic "ingress" {
+    for_each = var.rules
+    content {
+      from_port = ingress.value.from_port
+    }
+  }
+}
+
+resource "aws_iam_role" "main" {
+  assume_role_policy = templatefile("policy.tpl", {})
+}`;
+    const warnings = detectParserLimitations(content, "mixed.tf");
+    expect(warnings.some((w) => w.message.includes("templatefile"))).toBe(true);
+    // dynamic block for_each is NOT flagged (only resource-level for_each is)
+    expect(warnings.filter((w) => w.message.includes("for_each"))).toHaveLength(0);
+  });
+
+  it("warns on for_each with variable", () => {
+    const content = `resource "aws_iam_role" "roles" {
+  for_each = var.role_names
+}`;
+    const warnings = detectParserLimitations(content, "roles.tf");
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0].message).toContain("for_each");
+  });
+
+  it("warns on count = expression", () => {
+    const content = `resource "aws_iam_user" "team" {
+  count = length(var.users)
+  name  = var.users[count.index]
+}`;
+    const warnings = detectParserLimitations(content, "users.tf");
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0].message).toContain("count resource");
+  });
+
+  it("detects interpolated ARN with variable", () => {
+    const content = `resource "aws_iam_role_policy_attachment" "attach" {
+  policy_arn = "arn:aws:iam::\${var.account_id}:policy/Admin"
+}`;
+    const warnings = detectParserLimitations(content, "attach.tf");
+    expect(warnings.some((w) => w.message.includes("Interpolated ARN"))).toBe(true);
+  });
+
+  it("detects interpolated ARN with data source", () => {
+    const content = `resource "aws_lambda_function" "main" {
+  role = "arn:aws:iam::\${data.aws_caller_identity.current.account_id}:role/lambda-exec"
+}`;
+    const warnings = detectParserLimitations(content, "lambda.tf");
+    expect(warnings.some((w) => w.message.includes("Interpolated ARN"))).toBe(true);
+  });
+
+  it("detects interpolated ARN with aws-cn partition", () => {
+    const content = `resource "aws_iam_role_policy_attachment" "attach" {
+  policy_arn = "arn:aws-cn:iam::\${var.account_id}:policy/Admin"
+}`;
+    const warnings = detectParserLimitations(content, "attach.tf");
+    expect(warnings.some((w) => w.message.includes("Interpolated ARN"))).toBe(true);
+  });
+
+  it("detects interpolated ARN with aws-us-gov partition", () => {
+    const content = `resource "aws_lambda_function" "main" {
+  role = "arn:aws-us-gov:iam::\${data.aws_caller_identity.current.account_id}:role/lambda-exec"
+}`;
+    const warnings = detectParserLimitations(content, "lambda.tf");
+    expect(warnings.some((w) => w.message.includes("Interpolated ARN"))).toBe(true);
+  });
+
+  it("does not flag static ARN as interpolated", () => {
+    const content = `resource "aws_iam_role_policy_attachment" "attach" {
+  policy_arn = "arn:aws:iam::123456789012:policy/Admin"
+}`;
+    const warnings = detectParserLimitations(content, "attach.tf");
+    expect(warnings.filter((w) => w.message.includes("Interpolated ARN"))).toHaveLength(0);
+  });
+
+  it("does not warn on dynamic block for_each", () => {
+    const content = `resource "aws_security_group" "sg" {
+  dynamic "ingress" {
+    for_each = var.ingress_rules
+    content {
+      from_port = ingress.value.from_port
+    }
+  }
+}`;
+    const warnings = detectParserLimitations(content, "sg.tf");
+    expect(warnings.filter((w) => w.message.includes("for_each"))).toHaveLength(0);
+  });
+
+  it("detects for_each with 4-space indentation", () => {
+    const content = `resource "aws_iam_role" "roles" {
+    for_each = var.role_names
+    name     = each.key
+}`;
+    const warnings = detectParserLimitations(content, "roles.tf");
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0].message).toContain("for_each");
+  });
+
+  it("detects for_each with tab indentation", () => {
+    const content = `resource "aws_iam_role" "roles" {
+\tfor_each = var.role_names
+\tname     = each.key
+}`;
+    const warnings = detectParserLimitations(content, "roles.tf");
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0].message).toContain("for_each");
+  });
+
+  it("does not warn on for_each inside nested dynamic block at any indent", () => {
+    const content = `resource "aws_security_group" "sg" {
+    dynamic "ingress" {
+        for_each = var.ingress_rules
+        content {
+            from_port = ingress.value.from_port
+        }
+    }
+    dynamic "egress" {
+        for_each = var.egress_rules
+        content {
+            from_port = egress.value.from_port
+        }
+    }
+}`;
+    const warnings = detectParserLimitations(content, "sg.tf");
+    expect(warnings.filter((w) => w.message.includes("for_each"))).toHaveLength(0);
+  });
+
+  it("does not warn on count inside a nested provisioner block", () => {
+    const content = `resource "aws_instance" "main" {
+  ami = "ami-123456"
+
+  provisioner "local-exec" {
+    command = "echo count = 3"
+  }
+}`;
+    const warnings = detectParserLimitations(content, "instance.tf");
+    expect(warnings.filter((w) => w.message.includes("count"))).toHaveLength(0);
+  });
+
+  it("detects count with 4-space indentation", () => {
+    const content = `resource "aws_iam_user" "team" {
+    count = length(var.users)
+    name  = var.users[count.index]
+}`;
+    const warnings = detectParserLimitations(content, "users.tf");
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0].message).toContain("count resource");
+  });
+
+  it("detects for_each in data block", () => {
+    const content = `data "aws_iam_policy_document" "docs" {
+  for_each = var.policy_names
+}`;
+    const warnings = detectParserLimitations(content, "data.tf");
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0].message).toContain("for_each");
+  });
+
+  it("detects for_each in module block", () => {
+    const content = `module "services" {
+  source   = "./modules/service"
+  for_each = var.service_configs
+}`;
+    const warnings = detectParserLimitations(content, "modules.tf");
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0].message).toContain("for_each");
+  });
+});
+
+describe("parseTfFile with warnings", () => {
+  let testDir: string;
+  let cleanup: () => Promise<void>;
+
+  beforeEach(async () => {
+    ({ testDir, cleanup } = await setupTestDirectory());
+    vi.spyOn(process, "cwd").mockReturnValue(testDir);
+  });
+
+  afterEach(async () => {
+    await cleanup();
+  });
+
+  it("includes warnings in parsed file when limitations detected", async () => {
+    const filePath = join(testDir, "main.tf");
+    await writeFile(filePath, `resource "aws_iam_role" "main" {
+  assume_role_policy = templatefile("policy.tpl", { account_id = var.account_id })
+}`);
+    const result = await parseTfFile(filePath, "test-repo");
+    expect(result.warnings).toBeDefined();
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings![0].severity).toBe("warning");
+  });
+
+  it("omits warnings field when no limitations detected", async () => {
+    const filePath = join(testDir, "simple.tf");
+    await writeFile(filePath, `resource "aws_vpc" "main" {
+  cidr_block = "10.0.0.0/16"
+}`);
+    const result = await parseTfFile(filePath, "test-repo");
+    expect(result.warnings).toBeUndefined();
+  });
+});
+
+describe("scanDirectory symlink loop detection", () => {
+  let testDir: string;
+  let cleanup: () => Promise<void>;
+
+  beforeEach(async () => {
+    ({ testDir, cleanup } = await setupTestDirectory());
+    vi.spyOn(process, "cwd").mockReturnValue(testDir);
+  });
+
+  afterEach(async () => {
+    await cleanup();
+    vi.restoreAllMocks();
+  });
+
+  it("handles symlink loop without infinite recursion", async () => {
+    // Create: testDir/a/main.tf and testDir/a/link -> testDir (loop back to parent)
+    const subDir = join(testDir, "a");
+    await mkdir(subDir, { recursive: true });
+    await writeFile(join(subDir, "main.tf"), `resource "aws_vpc" "loop" { cidr_block = "10.0.0.0/16" }`);
+    await symlink(testDir, join(subDir, "link"));
+
+    const results = await scanDirectory(testDir, "loop-repo");
+    // Should find the one .tf file without hanging
+    expect(results).toHaveLength(1);
+    expect(results[0].blocks[0].name).toBe("loop");
+  });
+
+  it("handles mutual symlink loops between directories", async () => {
+    // Create: testDir/a and testDir/b that symlink to each other
+    const dirA = join(testDir, "a");
+    const dirB = join(testDir, "b");
+    await mkdir(dirA, { recursive: true });
+    await mkdir(dirB, { recursive: true });
+    await writeFile(join(dirA, "a.tf"), `resource "aws_vpc" "from_a" { cidr_block = "10.0.0.0/16" }`);
+    await writeFile(join(dirB, "b.tf"), `resource "aws_vpc" "from_b" { cidr_block = "10.1.0.0/16" }`);
+    // a/to_b -> b, b/to_a -> a
+    await symlink(dirB, join(dirA, "to_b"));
+    await symlink(dirA, join(dirB, "to_a"));
+
+    const results = await scanDirectory(testDir, "mutual-repo");
+    expect(results).toHaveLength(2);
+    const names = results.flatMap((r) => r.blocks.map((b) => b.name)).sort();
+    expect(names).toEqual(["from_a", "from_b"]);
+  });
+
+  it("follows symlinks to directories that are not loops", async () => {
+    // Create testDir/real/main.tf and testDir/link -> testDir/real (valid symlink, not a loop)
+    const realDir = join(testDir, "real");
+    await mkdir(realDir, { recursive: true });
+    await writeFile(join(realDir, "main.tf"), `resource "aws_vpc" "linked" { cidr_block = "10.0.0.0/16" }`);
+    await symlink(realDir, join(testDir, "link"));
+
+    const results = await scanDirectory(testDir, "symlink-repo");
+    // real/main.tf found via both paths but deduped by realpath
+    expect(results).toHaveLength(1);
+    expect(results[0].blocks[0].name).toBe("linked");
+  });
+});
+
+describe("scanDirectory parallel parsing", () => {
+  let testDir: string;
+  let cleanup: () => Promise<void>;
+
+  beforeEach(async () => {
+    ({ testDir, cleanup } = await setupTestDirectory());
+    vi.spyOn(process, "cwd").mockReturnValue(testDir);
+  });
+
+  afterEach(async () => {
+    await cleanup();
+    vi.restoreAllMocks();
+  });
+
+  it("parses many files in parallel and returns all results", async () => {
+    // Create 15 .tf files to verify concurrency limiter works with more than 10
+    for (let i = 0; i < 15; i++) {
+      await writeFile(
+        join(testDir, `resource-${i}.tf`),
+        `resource "aws_vpc" "vpc_${i}" { cidr_block = "10.${i}.0.0/16" }`,
+      );
+    }
+
+    const results = await scanDirectory(testDir, "parallel-repo");
+    expect(results).toHaveLength(15);
+    const names = results.flatMap((r) => r.blocks.map((b) => b.name)).sort();
+    expect(names).toHaveLength(15);
+    for (let i = 0; i < 15; i++) {
+      expect(names).toContain(`vpc_${i}`);
+    }
+  });
+
+  it("returns empty array for directory with no .tf files", async () => {
+    await writeFile(join(testDir, "readme.md"), "no terraform here");
+    const results = await scanDirectory(testDir, "empty-repo");
+    expect(results).toHaveLength(0);
   });
 });
