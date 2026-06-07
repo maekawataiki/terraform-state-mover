@@ -1,5 +1,6 @@
 import type { ParsedFile, DependencyGraph, GraphNode, GraphEdge, SerializedGraph } from "../types.js";
 import { getOrCreate } from "../utils/map-utils.js";
+import { logger } from "../utils/logger.js";
 
 export function buildNodeId(type: "resource" | "data", resourceType: string, name: string, repo: string): string {
   return `${repo}:${type}.${resourceType}.${name}`;
@@ -50,19 +51,35 @@ export function buildGraph(parsedFiles: ParsedFile[]): DependencyGraph {
         const arnService = arnParts[2];
         const expectedType = arnServiceTypeMap[arnService];
         // The definer is identified if the resource type matches the ARN service
-        // OR if the resource name matches a whole segment of the ARN path.
-        // Whole-segment equality (not substring) so that a resource named "role"
-        // or "a" doesn't claim ownership of unrelated ARNs. When the path has
-        // multiple segments, the first is a resource-kind indicator
-        // ("role/...", "function:...") and is skipped; a single-segment path
-        // (e.g. S3 bucket name) is the resource name itself.
+        // OR if the resource name matches the LAST segment of the ARN path.
+        // Only the last segment is checked because it represents the actual
+        // resource name. Intermediate segments (e.g. IAM path "/api/", policy
+        // path "/service-role/") are NOT resource identifiers and must not
+        // trigger false-positive ownership claims.
         const arnPath = arnParts.slice(5).join(":");
         const allSegments = arnPath.split(/[/:]/);
-        const segments = (allSegments.length > 1 ? allSegments.slice(1) : allSegments).map(normalizeToken);
-        const nameInArn = segments.includes(normalizeToken(block.name));
-        if (block.resourceType === expectedType || nameInArn) {
+        const lastSegment = normalizeToken(allSegments[allSegments.length - 1]);
+        const nameInArn = lastSegment === normalizeToken(block.name);
+        // Definer requires BOTH:
+        // 1. Type match (resource type matches the ARN service's expected type), OR
+        // 2. Name match AND the resource type is plausibly related to the ARN service
+        //    (i.e. its type starts with "aws_{service}"). This prevents aws_s3_bucket
+        //    from claiming an IAM role ARN just because the bucket name matches the
+        //    role's last path segment.
+        const typeMatch = block.resourceType === expectedType;
+        const typeCompatible = arnService ? block.resourceType.startsWith(`aws_${arnService}`) : false;
+        if (typeMatch || (nameInArn && typeCompatible)) {
           const id = buildNodeId("resource", block.resourceType, block.name, block.repo);
-          if (!arnDefinerMap.has(arn)) {
+          if (arnDefinerMap.has(arn)) {
+            const existing = arnDefinerMap.get(arn)!;
+            if (existing.id !== id) {
+              logger.warn(
+                `⚠ ARN definer conflict: "${arn}" claimed by both ${existing.id} and ${id}. ` +
+                `First match wins — migration may assign ownership incorrectly. ` +
+                `Consider using --plan-dir for authoritative dependency resolution.`,
+              );
+            }
+          } else {
             arnDefinerMap.set(arn, { id, repo: block.repo });
           }
         }
@@ -112,6 +129,20 @@ export function buildGraph(parsedFiles: ParsedFile[]): DependencyGraph {
         const definer = arnDefinerMap.get(arn);
         if (definer && definer.repo !== block.repo && definer.id !== fromId) {
           edges.push({ from: fromId, to: definer.id, type: "arn", label: arn });
+        }
+      }
+
+      // Emit unresolved reference edges — these represent dependencies that
+      // could NOT be statically resolved due to dynamic expressions.
+      // They serve as warnings in the dependency graph.
+      if (block.unresolvedRefs && block.unresolvedRefs.length > 0) {
+        for (const ref of block.unresolvedRefs) {
+          edges.push({
+            from: fromId,
+            to: "unresolved",
+            type: "unresolved",
+            label: `${ref.reason}: ${ref.expression}`,
+          });
         }
       }
     }

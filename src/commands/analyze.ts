@@ -12,7 +12,8 @@ import { enrichWithState } from "../state/state-reader.js";
 import { validateDirectory, validateFile } from "../utils/error.js";
 import { logger } from "../utils/logger.js";
 import { loadConfigFile, buildNamespaceConfig } from "../config/config-loader.js";
-import { logParserWarnings, resolvePresetConfig, loadStateDir } from "./shared.js";
+import { logParserWarnings, resolvePresetConfig, loadStateDir, warnNoStateDir, logUnresolvedReferences } from "./shared.js";
+import { enrichGraphWithPlan, loadPlanDir } from "../state/plan-parser.js";
 import type { NamespaceConfig, ParsedFile } from "../types.js";
 
 export function registerAnalyzeCommand(program: Command): void {
@@ -23,6 +24,7 @@ export function registerAnalyzeCommand(program: Command): void {
     .option("--preset <name>", "Use a preset config (e.g., gatekeeper)")
     .option("--include-crossplane", "Also scan .yaml files for Crossplane resources")
     .option("--state-dir <dir>", "Directory containing <repo-name>.tfstate.json files")
+    .option("--plan-dir <dir>", "Directory containing <repo-name>.plan.json files (output of terraform show -json)")
     .action(async (paths: string[], cmdOpts) => {
       const opts = program.opts();
 
@@ -52,11 +54,23 @@ export function registerAnalyzeCommand(program: Command): void {
       if (cmdOpts.stateDir) {
         stateFiles = await loadStateDir(cmdOpts.stateDir);
         parsedFiles = enrichWithState(parsedFiles, stateFiles);
+      } else {
+        warnNoStateDir();
       }
 
       logParserWarnings(parsedFiles);
 
-      const graph = buildGraph(parsedFiles);
+      let graph = buildGraph(parsedFiles);
+
+      // Enrich graph with plan-based dependencies (higher precision than static analysis)
+      if (cmdOpts.planDir) {
+        const plans = await loadPlanDir(cmdOpts.planDir);
+        for (const [repo, plan] of plans) {
+          graph = enrichGraphWithPlan({ graph, parsedPlan: plan, repo });
+        }
+      }
+
+      logUnresolvedReferences(graph);
       const arns = detectArns(parsedFiles);
       const byService = groupByService(arns);
       const unresolved = getUnresolvedArns(arns);

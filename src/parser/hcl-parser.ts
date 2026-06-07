@@ -1,7 +1,7 @@
 import { readFile, readdir, stat, realpath } from "node:fs/promises";
 import { join, basename } from "node:path";
 import { parse as hcl2jsonParse } from "@cdktf/hcl2json";
-import type { TerraformBlock, ParsedFile, ParseWarning } from "../types.js";
+import type { TerraformBlock, ParsedFile, ParseWarning, UnresolvedReference } from "../types.js";
 import { ARN_PATTERN_SIMPLE } from "../analyzer/arn-detector.js";
 import { CliError } from "../utils/error.js";
 
@@ -231,6 +231,71 @@ function collectStringsFromJson(obj: unknown, opts?: { skipMultiline?: boolean }
 }
 
 /**
+ * Extract unresolved dynamic references from collected strings.
+ * 
+ * @cdktf/hcl2json represents HCL expressions as "${...}" strings in its JSON output.
+ * We classify patterns that can't be statically resolved:
+ * - Dynamic indexing: data[local.type].xxx, var.map[key]
+ * - Function calls that construct references: lookup(...), element(...)
+ * - Conditionals: condition ? ref_a : ref_b
+ * - Splat expressions: resource.*.attr
+ */
+export function extractUnresolvedRefs(strings: string[]): UnresolvedReference[] {
+  const refs: UnresolvedReference[] = [];
+  const seen = new Set<string>();
+
+  for (const s of strings) {
+    // Only analyze interpolation expressions
+    if (!s.startsWith("${") && !s.includes("${")) continue;
+
+    // Extract all interpolation expressions from the string
+    const exprPattern = /\$\{([^}]+)\}/g;
+    let match: RegExpExecArray | null;
+    while ((match = exprPattern.exec(s)) !== null) {
+      const expr = match[1].trim();
+      if (seen.has(expr)) continue;
+
+      // Dynamic indexing: something[expression] where expression is not a literal
+      if (/\[[^\]]*[a-z_]+\.[a-z_]+[^\]]*\]/.test(expr)) {
+        seen.add(expr);
+        refs.push({ expression: expr, reason: "dynamic_index" });
+        continue;
+      }
+
+      // Computed key via lookup/element/try functions
+      if (/\b(lookup|element|try|coalesce)\s*\(/.test(expr)) {
+        seen.add(expr);
+        refs.push({ expression: expr, reason: "function_call" });
+        continue;
+      }
+
+      // Conditional expressions: cond ? a : b
+      if (/\?.*:/.test(expr)) {
+        seen.add(expr);
+        refs.push({ expression: expr, reason: "conditional" });
+        continue;
+      }
+
+      // Splat: resource.*.attr or resource[*].attr
+      if (/\.\*\.|\[\*\]/.test(expr)) {
+        seen.add(expr);
+        refs.push({ expression: expr, reason: "splat" });
+        continue;
+      }
+
+      // Computed map key: var.something["${...}"] or local.map[var.key]
+      if (/\[var\.|local\.|each\./.test(expr) && /\]/.test(expr)) {
+        seen.add(expr);
+        refs.push({ expression: expr, reason: "computed_key" });
+        continue;
+      }
+    }
+  }
+
+  return refs;
+}
+
+/**
  * Parse HCL content using @cdktf/hcl2json (Go HCL parser compiled to Wasm).
  * Returns TerraformBlock[] compatible with the rest of the pipeline.
  */
@@ -246,6 +311,7 @@ export async function parseHclAst(content: string, filePath: string, repo: strin
         const allStrings = collectStringsFromJson(configs, { skipMultiline: true });
         const arns = allStrings.flatMap((s) => extractArns(s));
         const stringLiterals = allStrings.filter((s) => !s.startsWith("${"));
+        const unresolvedRefs = extractUnresolvedRefs(allStrings);
 
         blocks.push({
           type: "resource",
@@ -254,6 +320,7 @@ export async function parseHclAst(content: string, filePath: string, repo: strin
           body,
           stringLiterals,
           arns,
+          unresolvedRefs: unresolvedRefs.length > 0 ? unresolvedRefs : undefined,
           filePath,
           repo,
         });
@@ -269,6 +336,7 @@ export async function parseHclAst(content: string, filePath: string, repo: strin
         const allStrings = collectStringsFromJson(configs, { skipMultiline: true });
         const arns = allStrings.flatMap((s) => extractArns(s));
         const stringLiterals = allStrings.filter((s) => !s.startsWith("${"));
+        const unresolvedRefs = extractUnresolvedRefs(allStrings);
 
         blocks.push({
           type: "data",
@@ -277,6 +345,7 @@ export async function parseHclAst(content: string, filePath: string, repo: strin
           body,
           stringLiterals,
           arns,
+          unresolvedRefs: unresolvedRefs.length > 0 ? unresolvedRefs : undefined,
           filePath,
           repo,
         });
@@ -490,7 +559,10 @@ export async function parseTfFile(filePath: string, repo: string): Promise<Parse
     warnings.push({
       filePath,
       line: 0,
-      message: "AST parser failed, fell back to regex parser — some patterns may not be detected",
+      message: "⚠ AST parser (@cdktf/hcl2json) FAILED — using regex fallback. " +
+        "Dependency detection accuracy is reduced: dynamic references, nested blocks, " +
+        "and complex expressions may not be detected. " +
+        "Fix any HCL syntax errors in this file, or use --plan-dir for authoritative analysis.",
       severity: "warning",
     });
   }

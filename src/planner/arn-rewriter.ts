@@ -79,12 +79,14 @@ export async function planArnRewrites(input: ArnRewriteInput): Promise<ArnRewrit
     try {
       content = await readFile(fullPath, "utf-8");
     } catch (error: unknown) {
-      // Try filePath directly
+      // Try filePath directly as fallback
+      logger.warn(`⚠ Could not read ${fullPath}: ${formatError(error)}`);
       try {
-        logger.warn(`⚠ Could not read ${fullPath} (${formatError(error)}), trying ${filePath} directly`);
+        logger.warn(`  Retrying with relative path: ${filePath}`);
         content = await readFile(filePath, "utf-8");
       } catch (fallbackError: unknown) {
         logger.error(`✗ Skipping ARN rewrite for ${filePath}: ${formatError(fallbackError)}`);
+        logger.error(`  This may indicate a permission error or missing file. Verify the file exists and is readable.`);
         continue;
       }
     }

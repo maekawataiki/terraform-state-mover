@@ -4,7 +4,7 @@ import type { HclMoveOperation, TerraformBlock, DependencyGraph, CutEdge, FileWr
 import { logger } from "../utils/logger.js";
 import { CliError, formatError } from "../utils/error.js";
 import { getOrCreate } from "../utils/map-utils.js";
-import { preprocessHcl, findMatchingBrace, parseHcl } from "../parser/hcl-parser.js";
+import { preprocessHcl, findMatchingBrace, parseHcl, parseHclAst } from "../parser/hcl-parser.js";
 
 function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -19,6 +19,16 @@ export interface BlockMoveInput {
 export interface BlockMoveResult {
   moves: HclMoveOperation[];
   fileWrites: FileWrite[];
+  /** Moves that were skipped due to file read errors or block location failures. */
+  failedMoves: BlockMoveFailure[];
+}
+
+export interface BlockMoveFailure {
+  resourceType: string;
+  name: string;
+  sourceRepo: string;
+  targetRepo: string;
+  reason: string;
 }
 
 /**
@@ -48,6 +58,10 @@ export function removeBlockFromContent(content: string, block: TerraformBlock): 
     braceEnd = findMatchingBrace(cleaned, braceStart, block.filePath);
   } catch {
     // Unmatched brace — leave content untouched rather than corrupting it
+    logger.warn(
+      `⚠ Block removal skipped: unmatched brace for ${block.type} "${block.resourceType}.${block.name}" in ${block.filePath}. ` +
+      `The file was left unchanged. This may indicate malformed HCL syntax.`,
+    );
     return content;
   }
 
@@ -163,6 +177,7 @@ export async function planBlockMoves(input: BlockMoveInput): Promise<BlockMoveRe
   const sourceContents = new Map<string, string>();
   const targetContents = new Map<string, string[]>();
   const locatedMoves: HclMoveOperation[] = [];
+  const failedMoves: BlockMoveFailure[] = [];
 
   for (const move of moves) {
     // Read source
@@ -176,17 +191,57 @@ export async function planBlockMoves(input: BlockMoveInput): Promise<BlockMoveRe
           const content = await readFile(move.block.filePath, "utf-8");
           sourceContents.set(move.sourceFilePath, content);
         } catch (fallbackError: unknown) {
-          logger.error(`✗ Failed to read source file for ${move.block.resourceType}.${move.block.name}: ${formatError(fallbackError)}`);
+          const reason = `File read failed: ${formatError(fallbackError)}`;
+          logger.error(`✗ Failed to read source file for ${move.block.resourceType}.${move.block.name}: ${reason}`);
+          failedMoves.push({
+            resourceType: move.block.resourceType,
+            name: move.block.name,
+            sourceRepo: move.sourceRepo,
+            targetRepo: move.targetRepo,
+            reason,
+          });
           continue;
         }
       }
     }
 
-    // Parse to get the real block with body
+    // Parse to get the real block with body.
+    // Uses AST parser (hcl2json Wasm) to confirm block existence (handles dynamic blocks,
+    // nested structures, complex expressions better than regex), then extracts the original
+    // HCL body text via regex parser for writing to target files.
     const content = sourceContents.get(move.sourceFilePath);
     if (!content) continue;
-    const blocks = parseHcl(content, move.sourceFilePath, move.sourceRepo);
-    const realBlock = blocks.find(
+
+    // Step 1: Confirm block exists via AST (catches edge cases regex misses)
+    let blockExists = false;
+    try {
+      const astBlocks = await parseHclAst(content, move.sourceFilePath, move.sourceRepo);
+      blockExists = astBlocks.some(
+        (b) => b.type === move.block.type && b.resourceType === move.block.resourceType && b.name === move.block.name,
+      );
+    } catch {
+      // AST parser failed — skip confirmation, try regex directly
+      blockExists = true;
+    }
+
+    if (!blockExists) {
+      const reason = "AST parser could not locate block — may use non-standard HCL syntax";
+      logger.warn(
+        `⚠ ${reason}: ${move.block.resourceType}.${move.block.name} in ${move.sourceFilePath}`,
+      );
+      failedMoves.push({
+        resourceType: move.block.resourceType,
+        name: move.block.name,
+        sourceRepo: move.sourceRepo,
+        targetRepo: move.targetRepo,
+        reason,
+      });
+      continue;
+    }
+
+    // Step 2: Extract original HCL body via regex parser (preserves formatting)
+    const regexBlocks = parseHcl(content, move.sourceFilePath, move.sourceRepo);
+    const realBlock = regexBlocks.find(
       (b) => b.type === move.block.type && b.resourceType === move.block.resourceType && b.name === move.block.name,
     );
 
@@ -195,10 +250,17 @@ export async function planBlockMoves(input: BlockMoveInput): Promise<BlockMoveRe
       locatedMoves.push(move);
       getOrCreate(targetContents, move.targetFilePath, () => []).push(blockToHcl(realBlock));
     } else {
+      const reason = "Regex parser could not locate block — may use unsupported syntax";
       logger.warn(
-        `⚠ Could not locate block ${move.block.resourceType}.${move.block.name} in ${move.sourceFilePath} — ` +
-        `skipping this move. The block may use syntax the fallback parser cannot handle.`,
+        `⚠ ${reason}: ${move.block.resourceType}.${move.block.name} in ${move.sourceFilePath}`,
       );
+      failedMoves.push({
+        resourceType: move.block.resourceType,
+        name: move.block.name,
+        sourceRepo: move.sourceRepo,
+        targetRepo: move.targetRepo,
+        reason,
+      });
     }
   }
 
@@ -232,5 +294,5 @@ export async function planBlockMoves(input: BlockMoveInput): Promise<BlockMoveRe
     }
   }
 
-  return { moves: locatedMoves, fileWrites };
+  return { moves: locatedMoves, fileWrites, failedMoves };
 }

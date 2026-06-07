@@ -10,6 +10,8 @@ Existing tools (`tfmigrate`, `tfsplit`, `terraform state mv`) can **execute** st
 2. **Diagnoses** anti-patterns with quantified Before/After metrics
 3. **Generates a complete migration**: HCL block moves, ARN→variable rewrites, output declarations, import/removed blocks — not just state operations
 
+Also supports **Crossplane** (Kubernetes-native IaC): scans `.yaml` manifests for Crossplane Managed Resources and ProviderConfigs, integrating them into the same dependency graph. Use `--include-crossplane` with the `analyze` command.
+
 ## What It Detects (and Fixes)
 
 | Anti-Pattern | Symptom | Fix | References |
@@ -218,7 +220,7 @@ src/
 ├── commands/         CLI command handlers (one file per command)
 │   ├── analyze.ts, migrate.ts, plan.ts, report.ts, validate.ts, visualize.ts
 │   └── shared.ts            Preset resolution, state loading, parser warnings
-├── parser/           HCL + Crossplane YAML scanning (comment/heredoc-aware)
+├── parser/           HCL + Crossplane YAML scanning (comment/heredoc-aware, AST + regex)
 ├── analyzer/         Dependency graph, ARN detection, namespace classification
 ├── planner/          Cut finding, topological sort, migration plan, code rewriting
 │   ├── hcl-migrator.ts         Orchestrates full migration pipeline
@@ -258,7 +260,7 @@ The `tf-state-mover` skill activates automatically when you describe a Terraform
 ## Development
 
 ```bash
-pnpm test         # 403 tests, co-located with source
+pnpm test         # 423 tests, co-located with source
 pnpm lint         # tsc --noEmit + ESLint
 pnpm build        # compile
 pnpm demo         # run all 9 scenarios

@@ -33,6 +33,15 @@ export async function planMigration(input: MigrateInput): Promise<MigrateResult>
   let blockMoveResult: Awaited<ReturnType<typeof planBlockMoves>> | null = null;
   try {
     blockMoveResult = await planBlockMoves({ graph, cutEdges, basePaths });
+    // Surface individual move failures as errors
+    if (blockMoveResult.failedMoves.length > 0) {
+      for (const failure of blockMoveResult.failedMoves) {
+        errors.push({
+          step: "block-moves",
+          error: `${failure.resourceType}.${failure.name} (${failure.sourceRepo} → ${failure.targetRepo}): ${failure.reason}`,
+        });
+      }
+    }
   } catch (error: unknown) {
     const msg = formatError(error);
     errors.push({ step: "block-moves", error: msg });

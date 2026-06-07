@@ -6,8 +6,17 @@ export interface TerraformBlock {
   rawBody?: string;
   stringLiterals: string[];
   arns: string[];
+  /** Dynamic expressions that could not be statically resolved to a concrete reference. */
+  unresolvedRefs?: UnresolvedReference[];
   filePath: string;
   repo: string;
+}
+
+export interface UnresolvedReference {
+  /** The raw expression string (e.g. "data[local.type].name.attr") */
+  expression: string;
+  /** Why it couldn't be resolved */
+  reason: "dynamic_index" | "computed_key" | "function_call" | "conditional" | "splat";
 }
 
 export interface ParseWarning {
@@ -47,7 +56,7 @@ export interface GraphNode {
 export interface GraphEdge {
   from: string;
   to: string;
-  type: "reference" | "arn" | "remote_state";
+  type: "reference" | "arn" | "remote_state" | "unresolved";
   label?: string;
 }
 

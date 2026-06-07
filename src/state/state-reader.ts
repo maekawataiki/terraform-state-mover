@@ -31,9 +31,12 @@ export function parseStateJson(json: string, repo: string): StateFile {
       if (instance.index_key !== undefined) {
         if (typeof instance.index_key === "number") {
           address = `${baseAddress}[${instance.index_key}]`;
-        } else {
-          address = `${baseAddress}["${instance.index_key}"]`;
+        } else if (typeof instance.index_key === "string") {
+          // Escape backslashes and quotes in for_each keys to produce valid state addresses
+          const escaped = instance.index_key.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+          address = `${baseAddress}["${escaped}"]`;
         }
+        // Other types (null, boolean, object) are ignored — not valid state index keys
       }
 
       resources.push({ address, type, name, arn, attributes });

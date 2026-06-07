@@ -12,7 +12,8 @@ import { generateRollbackPlan } from "../planner/rollback-generator.js";
 import { validateDirectory, validateFile } from "../utils/error.js";
 import { logger } from "../utils/logger.js";
 import { loadConfigFile, buildNamespaceConfig } from "../config/config-loader.js";
-import { logParserWarnings, resolvePresetConfig, loadStateDir } from "./shared.js";
+import { logParserWarnings, resolvePresetConfig, loadStateDir, warnNoStateDir, logUnresolvedReferences } from "./shared.js";
+import { enrichGraphWithPlan, loadPlanDir } from "../state/plan-parser.js";
 import type { NamespaceConfig, ParsedFile } from "../types.js";
 
 export function registerMigrateCommand(program: Command): void {
@@ -22,6 +23,7 @@ export function registerMigrateCommand(program: Command): void {
     .argument("<paths...>", "Paths to Terraform repos")
     .option("--preset <name>", "Use a preset config (e.g., gatekeeper)")
     .option("--state-dir <dir>", "Directory containing <repo-name>.tfstate.json files")
+    .option("--plan-dir <dir>", "Directory containing <repo-name>.plan.json files (output of terraform show -json)")
     .option("--mode <mode>", "Refactoring mode: import (TF 1.7+, cross-state), moved (TF 1.5+, same-state), tfmigrate (legacy)", "import")
     .option("--namespace <ns>", "Only migrate edges involving this namespace (e.g., service-api, foundation)")
     .option("--apply", "Write migration files to source repos (does NOT run terraform apply — you must do that manually after review)")
@@ -58,11 +60,23 @@ export function registerMigrateCommand(program: Command): void {
       if (cmdOpts.stateDir) {
         stateFiles = await loadStateDir(cmdOpts.stateDir);
         parsedFiles = enrichWithState(parsedFiles, stateFiles);
+      } else {
+        warnNoStateDir();
       }
 
       logParserWarnings(parsedFiles);
 
-      const graph = buildGraph(parsedFiles);
+      let graph = buildGraph(parsedFiles);
+
+      // Enrich graph with plan-based dependencies (higher precision than static analysis)
+      if (cmdOpts.planDir) {
+        const plans = await loadPlanDir(cmdOpts.planDir);
+        for (const [repo, plan] of plans) {
+          graph = enrichGraphWithPlan({ graph, parsedPlan: plan, repo });
+        }
+      }
+
+      logUnresolvedReferences(graph);
       let cutEdges = findCrossNamespaceEdges(graph, nsConfig);
       const arnRefs = detectArns(parsedFiles);
 

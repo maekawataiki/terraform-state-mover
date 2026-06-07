@@ -70,6 +70,70 @@ describe("state-reader", () => {
       const result = parseStateJson(JSON.stringify({ version: 4, resources: [] }), "empty");
       expect(result.resources).toHaveLength(0);
     });
+
+    it("generates indexed address for count resources", () => {
+      const json = JSON.stringify({
+        version: 4,
+        resources: [{
+          type: "aws_subnet",
+          name: "public",
+          instances: [
+            { index_key: 0, attributes: { id: "subnet-aaa" } },
+            { index_key: 1, attributes: { id: "subnet-bbb" } },
+          ],
+        }],
+      });
+      const result = parseStateJson(json, "infra");
+      expect(result.resources[0].address).toBe('aws_subnet.public[0]');
+      expect(result.resources[1].address).toBe('aws_subnet.public[1]');
+    });
+
+    it("generates indexed address for for_each resources", () => {
+      const json = JSON.stringify({
+        version: 4,
+        resources: [{
+          type: "aws_iam_role",
+          name: "service",
+          instances: [
+            { index_key: "api", attributes: { arn: "arn:aws:iam::123:role/api" } },
+            { index_key: "worker", attributes: { arn: "arn:aws:iam::123:role/worker" } },
+          ],
+        }],
+      });
+      const result = parseStateJson(json, "infra");
+      expect(result.resources[0].address).toBe('aws_iam_role.service["api"]');
+      expect(result.resources[1].address).toBe('aws_iam_role.service["worker"]');
+    });
+
+    it("escapes quotes in for_each index keys", () => {
+      const json = JSON.stringify({
+        version: 4,
+        resources: [{
+          type: "aws_iam_policy",
+          name: "custom",
+          instances: [
+            { index_key: 'key-with-"quotes"', attributes: { id: "policy-1" } },
+          ],
+        }],
+      });
+      const result = parseStateJson(json, "infra");
+      expect(result.resources[0].address).toBe('aws_iam_policy.custom["key-with-\\"quotes\\""]');
+    });
+
+    it("escapes backslashes in for_each index keys", () => {
+      const json = JSON.stringify({
+        version: 4,
+        resources: [{
+          type: "aws_ssm_parameter",
+          name: "config",
+          instances: [
+            { index_key: "path\\to\\value", attributes: { id: "/config/path" } },
+          ],
+        }],
+      });
+      const result = parseStateJson(json, "infra");
+      expect(result.resources[0].address).toBe('aws_ssm_parameter.config["path\\\\to\\\\value"]');
+    });
   });
 
   describe("buildArnMap", () => {

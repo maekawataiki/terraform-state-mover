@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { writeFile, mkdir, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { setupTestDirectory } from "../test-utils/test-directories.js";
-import { stripComments, stripHeredocs, preprocessHcl, parseHcl, extractArns, extractStringLiterals, parseTfFile, scanDirectory, detectParserLimitations } from "./hcl-parser.js";
+import { stripComments, stripHeredocs, preprocessHcl, parseHcl, extractArns, extractStringLiterals, parseTfFile, scanDirectory, detectParserLimitations, extractUnresolvedRefs } from "./hcl-parser.js";
 
 describe("stripComments", () => {
   it("strips single-line # comments", () => {
@@ -1014,5 +1014,96 @@ describe("scanDirectory parallel parsing", () => {
     await writeFile(join(testDir, "readme.md"), "no terraform here");
     const results = await scanDirectory(testDir, "empty-repo");
     expect(results).toHaveLength(0);
+  });
+});
+
+describe("extractUnresolvedRefs", () => {
+  it("detects dynamic indexing expressions", () => {
+    const strings = ['${data[local.type].my_resource.value}'];
+    const refs = extractUnresolvedRefs(strings);
+    expect(refs).toHaveLength(1);
+    expect(refs[0].reason).toBe("dynamic_index");
+    expect(refs[0].expression).toContain("local.type");
+  });
+
+  it("detects computed map keys", () => {
+    const strings = ['${var.roles[var.environment]}'];
+    const refs = extractUnresolvedRefs(strings);
+    expect(refs).toHaveLength(1);
+    // var.roles[var.environment] matches dynamic_index because [var.environment] contains a dotted reference
+    expect(refs[0].reason).toBe("dynamic_index");
+  });
+
+  it("detects function-based lookups", () => {
+    const strings = ['${lookup(var.role_map, var.service_name, "")}'];
+    const refs = extractUnresolvedRefs(strings);
+    expect(refs).toHaveLength(1);
+    expect(refs[0].reason).toBe("function_call");
+  });
+
+  it("detects conditional expressions", () => {
+    const strings = ['${var.use_custom ? aws_iam_role.custom.arn : aws_iam_role.default.arn}'];
+    const refs = extractUnresolvedRefs(strings);
+    expect(refs).toHaveLength(1);
+    expect(refs[0].reason).toBe("conditional");
+  });
+
+  it("detects splat expressions", () => {
+    const strings = ['${aws_subnet.private.*.id}'];
+    const refs = extractUnresolvedRefs(strings);
+    expect(refs).toHaveLength(1);
+    expect(refs[0].reason).toBe("splat");
+  });
+
+  it("detects [*] splat syntax", () => {
+    const strings = ['${aws_subnet.private[*].id}'];
+    const refs = extractUnresolvedRefs(strings);
+    expect(refs).toHaveLength(1);
+    expect(refs[0].reason).toBe("splat");
+  });
+
+  it("ignores plain static references", () => {
+    const strings = ['${aws_iam_role.my_role.arn}', '${var.region}', 'static-string'];
+    const refs = extractUnresolvedRefs(strings);
+    expect(refs).toHaveLength(0);
+  });
+
+  it("deduplicates identical expressions", () => {
+    const strings = [
+      '${lookup(var.map, "key")}',
+      '${lookup(var.map, "key")}',
+      '${lookup(var.map, "key")}',
+    ];
+    const refs = extractUnresolvedRefs(strings);
+    expect(refs).toHaveLength(1);
+  });
+
+  it("handles multiple different unresolved refs", () => {
+    const strings = [
+      '${data[local.type].resource.value}',
+      '${lookup(var.arns, var.name)}',
+      '${var.enabled ? aws_s3_bucket.a.id : aws_s3_bucket.b.id}',
+    ];
+    const refs = extractUnresolvedRefs(strings);
+    expect(refs).toHaveLength(3);
+    const reasons = refs.map((r) => r.reason);
+    expect(reasons).toContain("dynamic_index");
+    expect(reasons).toContain("function_call");
+    expect(reasons).toContain("conditional");
+  });
+
+  it("detects each.key based indexing", () => {
+    const strings = ['${var.configs[each.key].role_arn}'];
+    const refs = extractUnresolvedRefs(strings);
+    expect(refs).toHaveLength(1);
+    // each.key in brackets matches dynamic_index pattern (dotted ref inside brackets)
+    expect(refs[0].reason).toBe("dynamic_index");
+  });
+
+  it("handles embedded interpolations in longer strings", () => {
+    const strings = ['arn:aws:iam::${data[local.account_type].account.id}:role/service'];
+    const refs = extractUnresolvedRefs(strings);
+    expect(refs).toHaveLength(1);
+    expect(refs[0].reason).toBe("dynamic_index");
   });
 });
