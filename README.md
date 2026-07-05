@@ -334,6 +334,24 @@ src/
 └── cli.ts            Entry point (command registration only)
 ```
 
+## Performance
+
+Benchmarked on Apple M-series (single-threaded, no caching):
+
+| Scale | Resources | Repos | Edges | `analyze` time |
+|-------|-----------|-------|-------|---------------|
+| Small | 18 | 4 | 10 | < 0.5s |
+| Medium | 603 | 51 | 150 | 0.6s |
+| Large | 2,103 | 51 | 600 | 2.8s |
+
+> The tool parses HCL via `@cdktf/hcl2json` (WASM-based AST), builds the dependency graph, runs all 9 pattern detectors, and classifies namespaces — all in under 3 seconds for 2,000+ resources across 50+ repos. This is well within CI budget for PR-gating use cases.
+
+To reproduce:
+```bash
+node scripts/generate-perf-fixture.mjs 50 40   # 50 services × 40 resources = ~2100 resources
+time pnpm cli analyze tmp/perf-fixture/* --preset gatekeeper --state-dir tmp/perf-fixture/state --json
+```
+
 ## AI Agent Integration (Claude Code / Kiro)
 
 This project ships with built-in skills and slash commands for AI-assisted workflows.
