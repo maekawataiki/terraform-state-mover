@@ -41,6 +41,21 @@ npx terraform-state-mover analyze ./my-repos --preset gatekeeper
 pnpm add terraform-state-mover
 ```
 
+### Standalone Binary (no Node.js required)
+
+Download pre-built binaries from [GitHub Releases](https://github.com/tmae/terraform-state-mover/releases):
+
+```bash
+# macOS (Apple Silicon)
+curl -L https://github.com/tmae/terraform-state-mover/releases/latest/download/tf-state-mover-darwin-arm64 -o tf-state-mover
+chmod +x tf-state-mover
+./tf-state-mover analyze ./my-repos --preset gatekeeper
+
+# Linux (x64)
+curl -L https://github.com/tmae/terraform-state-mover/releases/latest/download/tf-state-mover-linux-x64 -o tf-state-mover
+chmod +x tf-state-mover
+```
+
 ## Quick Start
 
 ```bash
@@ -69,7 +84,7 @@ ls output/migrated/                 # file tree after migration
 pnpm cli migrate ./infra-central ./service-api ./service-analytics \
   --preset gatekeeper \
   --state-dir ./states \
-  --apply
+  --write
 
 # 5. Run terraform in both repos
 cd service-api && terraform apply    # imports resource into new state
@@ -105,7 +120,8 @@ pnpm cli migrate <paths...> [options]
   --state-dir <dir>      Directory with <repo>.tfstate.json files
   --namespace <ns>       Only migrate edges involving this namespace
   --mode <mode>          import (TF 1.7+, default), moved (TF 1.5+), tfmigrate (legacy)
-  --apply                Write migration files to source repos (does NOT run terraform apply)
+  --apply                [deprecated: use --write] Write migration files to source repos
+  --write                Write migration files to source repos (does NOT run terraform apply)
   --validate             Run terraform validate on output
   --inject-boundary <arn>  Inject permissions_boundary into moved IAM roles (produces plan diff)
   -o <dir>               Output directory for generated files
@@ -259,9 +275,11 @@ if [ "$EDGES" -gt 5 ]; then echo "Too many cross-namespace edges"; exit 1; fi
 | Code | Meaning |
 |------|---------|
 | `0` | Success. Analysis completed, no issues (or `--strict` not used). |
-| `1` | Failure. With `--strict`: anti-patterns, parser warnings, or unresolved references detected. Without `--strict`: invalid arguments, file not found, or internal error. |
+| `1` | Anti-patterns detected (`--strict` mode) or policy violation. |
+| `2` | User error: invalid arguments, missing files, malformed configuration. |
+| `3` | Internal error: unexpected failure, parser crash, bug. Report to GitHub Issues. |
 
-> Without `--strict`, the tool always exits `0` on successful analysis — even if anti-patterns are detected. This is intentional: detection is informational by default, gating is opt-in.
+> Without `--strict`, the tool always exits `0` on successful analysis — even if anti-patterns are detected. This is intentional: detection is informational by default, gating is opt-in. Exit codes `2` and `3` distinguish between user-fixable problems and bugs that should be reported.
 
 ## Detection Guarantees
 

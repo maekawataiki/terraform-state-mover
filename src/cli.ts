@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import { CliError, formatError } from "./utils/error.js";
+import { CliError, ExitCode, formatError } from "./utils/error.js";
 import { logger } from "./utils/logger.js";
 import { registerAnalyzeCommand } from "./commands/analyze.js";
 import { registerPlanCommand } from "./commands/plan.js";
@@ -32,13 +32,13 @@ async function main() {
   } catch (error: unknown) {
     if (error instanceof CliError) {
       logger.error(`Error: ${error.message}`);
-      process.exitCode = 1;
+      process.exitCode = error.exitCode;
     } else {
       logger.error(`Unexpected error: ${formatError(error)}`);
       if (program.opts().verbose) {
         logger.error(error);
       }
-      process.exitCode = 1;
+      process.exitCode = ExitCode.INTERNAL_ERROR;
     }
   }
 }

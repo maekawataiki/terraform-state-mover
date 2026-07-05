@@ -1,13 +1,30 @@
 import { stat } from "node:fs/promises";
 
 /**
+ * Structured exit codes for the CLI.
+ */
+export enum ExitCode {
+  /** Success — clean analysis or migration completed. */
+  SUCCESS = 0,
+  /** Anti-patterns detected (--strict mode) or policy violation. */
+  ANTI_PATTERN = 1,
+  /** User error — invalid arguments, missing files, malformed configuration. */
+  USER_ERROR = 2,
+  /** Internal error — unexpected failure, parser crash, bug. */
+  INTERNAL_ERROR = 3,
+}
+
+/**
  * Custom error class for CLI errors that should be displayed to the user
  * without a stack trace.
  */
 export class CliError extends Error {
-  constructor(message: string) {
+  readonly exitCode: ExitCode;
+
+  constructor(message: string, exitCode: ExitCode = ExitCode.USER_ERROR) {
     super(message);
     this.name = "CliError";
+    this.exitCode = exitCode;
   }
 }
 

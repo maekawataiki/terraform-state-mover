@@ -571,4 +571,86 @@ describe("hcl-migrator", () => {
       spy3.mockRestore();
     });
   });
+
+  describe("applyMigration atomicity", () => {
+    it("does not leave partial writes when a later file fails", async () => {
+      const dir = join(testDir, "atomic-test");
+      await mkdir(dir, { recursive: true });
+
+      // Pre-existing file that should be preserved
+      const existingFile = join(dir, "existing.tf");
+      await writeFile(existingFile, "original content");
+
+      const result = {
+        moves: [],
+        variableDeclarations: [],
+        outputDeclarations: [],
+        movedBlocks: [],
+        importBlocks: [],
+        removedBlocks: [],
+        fileWrites: [
+          {
+            filePath: join(dir, "new-file.tf"),
+            content: "new content\n",
+            operation: "create" as const,
+          },
+          {
+            // Write to an impossible path to trigger failure during rename
+            filePath: join("/dev/null/impossible/path.tf"),
+            content: "will fail\n",
+            operation: "create" as const,
+          },
+        ],
+        tfmigrateHcl: "",
+        summary: { resourcesMoved: 0, arnsRewritten: 0, outputsGenerated: 0, filesModified: 2 },
+      };
+
+      await expect(applyMigration(result)).rejects.toThrow();
+
+      // The first file should NOT exist because the atomic commit failed
+      const { stat } = await import("node:fs/promises");
+      await expect(stat(join(dir, "new-file.tf"))).rejects.toThrow();
+
+      // Existing file remains untouched
+      const content = await readFile(existingFile, "utf-8");
+      expect(content).toBe("original content");
+    });
+
+    it("cleans up temp files on failure during temp write phase", async () => {
+      const dir = join(testDir, "temp-cleanup");
+      await mkdir(dir, { recursive: true });
+
+      const result = {
+        moves: [],
+        variableDeclarations: [],
+        outputDeclarations: [],
+        movedBlocks: [],
+        importBlocks: [],
+        removedBlocks: [],
+        fileWrites: [
+          {
+            filePath: join(dir, "good.tf"),
+            content: "good content\n",
+            operation: "create" as const,
+          },
+          {
+            // This will fail because the parent dir is /dev/null which can't have children
+            filePath: join("/dev/null/sub/dir/bad.tf"),
+            content: "bad content\n",
+            operation: "create" as const,
+          },
+        ],
+        tfmigrateHcl: "",
+        summary: { resourcesMoved: 0, arnsRewritten: 0, outputsGenerated: 0, filesModified: 2 },
+      };
+
+      await expect(applyMigration(result)).rejects.toThrow();
+
+      // No temp files should remain in the dir
+      const { readdir } = await import("node:fs/promises");
+      const files = await readdir(dir);
+      const tempFiles = files.filter((f) => f.includes(".tf-mover-tmp-"));
+      expect(tempFiles).toHaveLength(0);
+    });
+  });
 });

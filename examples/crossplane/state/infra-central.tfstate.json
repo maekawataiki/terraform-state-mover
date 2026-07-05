@@ -1,0 +1,25 @@
+{
+  "version": 4,
+  "resources": [
+    {
+      "type": "aws_iam_role",
+      "name": "crossplane_db_role",
+      "instances": [{"attributes": {"arn": "arn:aws:iam::111111111111:role/crossplane-db-access"}}]
+    },
+    {
+      "type": "aws_iam_role",
+      "name": "crossplane_storage_role",
+      "instances": [{"attributes": {"arn": "arn:aws:iam::111111111111:role/crossplane-storage-access"}}]
+    },
+    {
+      "type": "aws_s3_bucket",
+      "name": "data_lake",
+      "instances": [{"attributes": {"arn": "arn:aws:s3:::acme-data-lake-prod", "bucket": "acme-data-lake-prod"}}]
+    },
+    {
+      "type": "aws_s3_bucket",
+      "name": "artifacts",
+      "instances": [{"attributes": {"arn": "arn:aws:s3:::acme-artifacts-prod", "bucket": "acme-artifacts-prod"}}]
+    }
+  ]
+}

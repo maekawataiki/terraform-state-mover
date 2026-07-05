@@ -7,3 +7,4 @@ tmp/
 .terraform/
 .terraform.lock.hcl
 lambda.zip
+coverage/

@@ -11,6 +11,7 @@ import type {
 } from "../types.js";
 import { logger } from "../utils/logger.js";
 import { formatError } from "../utils/error.js";
+import { validatePlanJson } from "./plan-schema.js";
 
 export type { PlanConfigResource, PlanValueResource, PlanResourceChange, ParsedPlan } from "../types.js";
 
@@ -129,7 +130,14 @@ function collectValueResources(module: unknown): PlanValueResource[] {
  * Parse the JSON output of `terraform show -json <plan-file>`.
  */
 export function parsePlanJson(json: string): ParsedPlan {
-  const plan = JSON.parse(json);
+  let rawPlan: unknown;
+  try {
+    rawPlan = JSON.parse(json);
+  } catch (error: unknown) {
+    throw new Error(`Failed to parse Terraform plan JSON: ${formatError(error)}`);
+  }
+
+  const plan = validatePlanJson(rawPlan);
 
   // Parse configuration.root_module for references
   const configResources = collectConfigResources(

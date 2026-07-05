@@ -3,15 +3,24 @@ import type { ParsedFile, StateResource, StateFile } from "../types.js";
 export type { StateResource, StateFile } from "../types.js";
 
 export function parseStateJson(json: string, repo: string): StateFile {
-  const state = JSON.parse(json);
+  let state: Record<string, unknown>;
+  try {
+    state = JSON.parse(json);
+  } catch {
+    // Never leak raw state content in error messages — it may contain secrets
+    throw new Error(
+      `Failed to parse state JSON for "${repo}": invalid JSON format. ` +
+      `Ensure the file is valid output of \`terraform state pull\`.`,
+    );
+  }
   const resources: StateResource[] = [];
 
-  for (const resource of state.resources ?? []) {
+  for (const resource of (state.resources ?? []) as Array<Record<string, unknown>>) {
     const type = resource.type as string;
     const name = resource.name as string;
     const baseAddress = `${type}.${name}`;
 
-    for (const instance of resource.instances ?? []) {
+    for (const instance of (resource.instances ?? []) as Array<Record<string, unknown>>) {
       const attributes = (instance.attributes ?? {}) as Record<string, unknown>;
       const arn = (attributes.arn ?? attributes.id ?? undefined) as string | undefined;
 

@@ -1,0 +1,6 @@
+{
+  "fixture": "medium",
+  "baseline_ms": 1000,
+  "tolerance_pct": 20,
+  "updated": "2026-07-05"
+}

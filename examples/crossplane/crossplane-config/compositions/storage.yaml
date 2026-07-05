@@ -1,0 +1,37 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: xstorage-aws
+spec:
+  compositeTypeRef:
+    apiVersion: storage.acme.io/v1alpha1
+    kind: XStorage
+  resources:
+    - name: bucket-policy
+      base:
+        apiVersion: aws.upbound.io/v1beta1
+        kind: Policy
+        spec:
+          forProvider:
+            region: us-east-1
+            policy: |
+              {
+                "Version": "2012-10-17",
+                "Statement": [{
+                  "Effect": "Allow",
+                  "Action": ["s3:GetObject", "s3:PutObject"],
+                  "Resource": "arn:aws:s3:::acme-data-lake-prod/*"
+                }]
+              }
+          providerConfigRef:
+            name: aws-provider
+    - name: storage-role-attachment
+      base:
+        apiVersion: iam.aws.upbound.io/v1beta1
+        kind: RolePolicyAttachment
+        spec:
+          forProvider:
+            roleArn: "arn:aws:iam::111111111111:role/crossplane-storage-access"
+            policyArn: "arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess"
+          providerConfigRef:
+            name: aws-provider

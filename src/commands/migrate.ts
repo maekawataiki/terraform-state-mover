@@ -18,11 +18,18 @@ export function registerMigrateCommand(program: Command): void {
     .option("--plan-dir <dir>", "Directory containing <repo-name>.plan.json files (output of terraform show -json)")
     .option("--mode <mode>", "Refactoring mode: import (TF 1.7+, cross-state), moved (TF 1.5+, same-state), tfmigrate (legacy)", "import")
     .option("--namespace <ns>", "Only migrate edges involving this namespace (e.g., service-api, foundation)")
-    .option("--apply", "Write migration files to source repos (does NOT run terraform apply — you must do that manually after review)")
+    .option("--write", "Write migration files to source repos (does NOT run terraform apply — you must do that manually after review)")
+    .option("--apply", "[deprecated: use --write] Write migration files to source repos")
     .option("--validate", "Run terraform validate on migrated output (requires terraform binary)")
     .option("--inject-boundary <arn>", "Inject permissions_boundary into moved IAM roles (produces plan diff)")
     .action(async (paths: string[], cmdOpts) => {
       const opts = program.opts();
+
+      // Handle deprecated --apply flag
+      if (cmdOpts.apply && !cmdOpts.write) {
+        logger.warn("⚠ --apply is deprecated. Use --write instead.");
+        cmdOpts.write = true;
+      }
 
       const ctx = await buildCommandContext({
         paths,
@@ -59,7 +66,7 @@ export function registerMigrateCommand(program: Command): void {
         basePaths,
         stateFiles,
         movedBlockMode: cmdOpts.mode as "moved" | "import" | "tfmigrate",
-        dryRun: !cmdOpts.apply,
+        dryRun: !cmdOpts.write,
         injectBoundaryArn: cmdOpts.injectBoundary,
       });
 
@@ -84,12 +91,12 @@ export function registerMigrateCommand(program: Command): void {
         logger.log(`  [${icon}] ${fw.filePath}`);
       }
 
-      if (cmdOpts.apply) {
+      if (cmdOpts.write) {
         await handleApply({ result, opts });
       } else if (opts.outputDir) {
         await handleOutputPreview({ result, outputDir: opts.outputDir as string, basePaths, cmdOpts });
       } else {
-        logger.log("\n⚠ Dry run — no files modified. Use -o <dir> to output files, or --apply to write in-place.");
+        logger.log("\n⚠ Dry run — no files modified. Use -o <dir> to output files, or --write to write in-place.");
       }
     });
 }
@@ -205,7 +212,7 @@ async function handleOutputPreview({ result, outputDir, basePaths, cmdOpts }: {
     }
   }
 
-  logger.log(`\nSource repos are untouched. To apply: re-run with --apply`);
+  logger.log(`\nSource repos are untouched. To apply: re-run with --write`);
 }
 
 function resolveRelativePath(filePath: string, basePaths: Map<string, string>): string {

@@ -28,6 +28,7 @@ export type {
   Namespace,
   GraphNode,
   GraphEdge,
+  GraphConflict,
   DependencyGraph,
   SerializedGraph,
   ArnReference,

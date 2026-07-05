@@ -1,5 +1,6 @@
-import { writeFile, mkdir, rm, readFile } from "node:fs/promises";
+import { writeFile, mkdir, rm, readFile, rename } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { randomUUID } from "node:crypto";
 import type { DependencyGraph, CutEdge, ArnReference, MigrateResult, MigrationStepError, FileWrite, VariableDeclaration } from "../types.js";
 import type { StateFile } from "../state/state-reader.js";
 import { planBlockMoves, blockToHcl } from "./hcl-block-mover.js";
@@ -219,13 +220,20 @@ function rebuildTargetFileWrites(blockMoveResult: BlockMoveResult): void {
 }
 
 /**
- * Apply planned file writes to disk.
+ * Apply planned file writes to disk using atomic write-then-rename pattern.
  *
- * Best-effort atomic: original contents of every touched file are captured
- * before any write. If a write fails mid-way, all already-applied writes are
- * rolled back so the working tree is not left half-migrated.
+ * Strategy:
+ * 1. Snapshot originals of all files we are about to touch
+ * 2. Write all new content to temporary files (.tf-mover-tmp-{uuid}) adjacent to targets
+ * 3. Once ALL temp writes succeed, rename each temp → final (atomic per-file on POSIX)
+ * 4. On failure during rename phase: attempt rollback of already-renamed files
+ *
+ * This prevents a partial-write state where the repo is left with some files
+ * modified and others untouched after an I/O error.
  */
 export async function applyMigration(result: MigrateResult): Promise<void> {
+  const suffix = `.tf-mover-tmp-${randomUUID().slice(0, 8)}`;
+
   // Snapshot originals of all files we are about to touch
   const originals = new Map<string, string | null>(); // null = did not exist
   for (const fw of result.fileWrites) {
@@ -236,20 +244,48 @@ export async function applyMigration(result: MigrateResult): Promise<void> {
     }
   }
 
-  const applied: string[] = [];
+  // Phase 1: Write all content to temporary files
+  const tempPaths = new Map<string, string>(); // finalPath → tempPath
+  try {
+    for (const fw of result.fileWrites) {
+      if (fw.operation === "delete") {
+        // Deletes don't need a temp file; they happen in phase 2
+        continue;
+      }
+      const tempPath = fw.filePath + suffix;
+      await mkdir(dirname(tempPath), { recursive: true });
+      await writeFile(tempPath, fw.content, "utf-8");
+      tempPaths.set(fw.filePath, tempPath);
+    }
+  } catch (error: unknown) {
+    // Clean up any temp files written so far
+    logger.error(`✗ Migration failed during temp file creation — cleaning up`);
+    for (const tempPath of tempPaths.values()) {
+      await rm(tempPath, { force: true }).catch(() => {});
+    }
+    throw error;
+  }
+
+  // Phase 2: Atomic rename (temp → final) + deletes
+  const committed: string[] = [];
   try {
     for (const fw of result.fileWrites) {
       if (fw.operation === "delete") {
         await rm(fw.filePath, { force: true });
       } else {
-        await mkdir(dirname(fw.filePath), { recursive: true });
-        await writeFile(fw.filePath, fw.content, "utf-8");
+        const tempPath = tempPaths.get(fw.filePath)!;
+        await rename(tempPath, fw.filePath);
       }
-      applied.push(fw.filePath);
+      committed.push(fw.filePath);
     }
   } catch (error: unknown) {
-    logger.error(`✗ Migration write failed at ${applied.length + 1}/${result.fileWrites.length} — rolling back ${applied.length} applied write(s)`);
-    for (const filePath of applied.reverse()) {
+    logger.error(
+      `✗ Migration failed during commit phase at ${committed.length + 1}/${result.fileWrites.length} — ` +
+      `rolling back ${committed.length} committed write(s)`,
+    );
+
+    // Rollback committed files
+    for (const filePath of committed.reverse()) {
       const original = originals.get(filePath);
       try {
         if (original === null) {
@@ -261,6 +297,14 @@ export async function applyMigration(result: MigrateResult): Promise<void> {
         logger.error(`✗ Could not restore ${filePath}: ${formatError(restoreError)}`);
       }
     }
+
+    // Clean up any remaining temp files
+    for (const [finalPath, tempPath] of tempPaths) {
+      if (!committed.includes(finalPath)) {
+        await rm(tempPath, { force: true }).catch(() => {});
+      }
+    }
+
     throw error;
   }
 }

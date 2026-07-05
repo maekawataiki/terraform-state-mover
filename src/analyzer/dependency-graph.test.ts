@@ -237,6 +237,56 @@ describe("dependency-graph", () => {
       expect(arnEdges[0].to).toBe("repo1:resource.aws_iam_policy.shared");
     });
 
+    it("populates conflicts array when two resources in different repos claim the same ARN", () => {
+      const arn = "arn:aws:iam::123456789012:role/shared-role";
+      const file1 = makeParsedFile([
+        { type: "resource", resourceType: "aws_iam_role", name: "shared-role", body: `{ arn = "${arn}" }`, arns: [arn] },
+      ], "repo1");
+      const file2 = makeParsedFile([
+        { type: "resource", resourceType: "aws_iam_role", name: "shared-role", body: `{ arn = "${arn}" }`, arns: [arn] },
+      ], "repo2");
+
+      const graph = buildGraph([file1, file2]);
+      expect(graph.conflicts).toBeDefined();
+      expect(graph.conflicts!.length).toBe(1);
+      expect(graph.conflicts![0].type).toBe("arn_definer");
+      expect(graph.conflicts![0].arn).toBe(arn);
+    });
+
+    it("conflict contains both resource IDs as claimants", () => {
+      const arn = "arn:aws:iam::123456789012:role/shared-role";
+      const file1 = makeParsedFile([
+        { type: "resource", resourceType: "aws_iam_role", name: "shared-role", body: `{ arn = "${arn}" }`, arns: [arn] },
+      ], "repo1");
+      const file2 = makeParsedFile([
+        { type: "resource", resourceType: "aws_iam_role", name: "shared-role", body: `{ arn = "${arn}" }`, arns: [arn] },
+      ], "repo2");
+
+      const graph = buildGraph([file1, file2]);
+      const conflict = graph.conflicts![0];
+      expect(conflict.claimants).toContain("repo1:resource.aws_iam_role.shared-role");
+      expect(conflict.claimants).toContain("repo2:resource.aws_iam_role.shared-role");
+    });
+
+    it("ARN edge still goes to first match when conflict exists (backward compat)", () => {
+      const arn = "arn:aws:iam::123456789012:role/shared-role";
+      const file1 = makeParsedFile([
+        { type: "resource", resourceType: "aws_iam_role", name: "shared-role", body: `{ arn = "${arn}" }`, arns: [arn] },
+      ], "repo1");
+      const file2 = makeParsedFile([
+        { type: "resource", resourceType: "aws_iam_role", name: "shared-role", body: `{ arn = "${arn}" }`, arns: [arn] },
+      ], "repo2");
+      const file3 = makeParsedFile([
+        { type: "resource", resourceType: "aws_lambda_function", name: "func", body: `{ role = "${arn}" }`, arns: [arn] },
+      ], "repo3");
+
+      const graph = buildGraph([file1, file2, file3]);
+      // First match (repo1) wins
+      const arnEdges = graph.edges.filter((e) => e.type === "arn");
+      expect(arnEdges.length).toBeGreaterThanOrEqual(1);
+      expect(arnEdges[0].to).toBe("repo1:resource.aws_iam_role.shared-role");
+    });
+
     it("emits unresolved edges for blocks with dynamic references", () => {
       const files = [makeParsedFile([
         {

@@ -1,0 +1,39 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: xdatabase-aws
+spec:
+  compositeTypeRef:
+    apiVersion: database.acme.io/v1alpha1
+    kind: XDatabase
+  resources:
+    - name: rds-instance
+      base:
+        apiVersion: aws.upbound.io/v1beta1
+        kind: Instance
+        spec:
+          forProvider:
+            region: us-east-1
+            engine: postgres
+            engineVersion: "15.4"
+            instanceClass: db.t3.micro
+            allocatedStorage: 20
+            masterUsername: admin
+            masterPasswordSecretRef:
+              name: db-secret
+              namespace: crossplane-system
+              key: password
+            iamDatabaseAuthenticationEnabled: true
+            associatedRoleArn: "arn:aws:iam::111111111111:role/crossplane-db-access"
+          providerConfigRef:
+            name: aws-provider
+    - name: db-monitoring-role
+      base:
+        apiVersion: iam.aws.upbound.io/v1beta1
+        kind: RolePolicyAttachment
+        spec:
+          forProvider:
+            roleArn: "arn:aws:iam::111111111111:role/crossplane-db-access"
+            policyArn: "arn:aws:iam::aws:policy/service-role/AmazonRDSEnhancedMonitoringRole"
+          providerConfigRef:
+            name: aws-provider

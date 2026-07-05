@@ -40,6 +40,54 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
 
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test:coverage
+      - name: Check coverage threshold
+        run: |
+          COVERAGE=$(node -e "const r = require('./coverage/coverage-summary.json'); console.log(r.total.lines.pct)")
+          echo "Lines coverage: ${COVERAGE}%"
+          if (( $(echo "$COVERAGE < 85" | bc -l) )); then
+            echo "❌ Coverage ${COVERAGE}% is below threshold of 85%"
+            exit 1
+          fi
+          echo "✅ Coverage ${COVERAGE}% meets threshold of 85%"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage/
+
+  performance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Generate performance fixture
+        run: node scripts/generate-perf-fixture.mjs 10 15
+      - name: Run performance benchmark
+        run: node scripts/perf-benchmark.mjs | tee benchmark-results.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: benchmark-results.json
+
   build:
     runs-on: ubuntu-latest
     steps:

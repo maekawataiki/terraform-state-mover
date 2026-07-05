@@ -1,4 +1,4 @@
-import type { ParsedFile, DependencyGraph, GraphNode, GraphEdge, SerializedGraph } from "../types.js";
+import type { ParsedFile, DependencyGraph, GraphNode, GraphEdge, SerializedGraph, GraphConflict } from "../types.js";
 import { getOrCreate } from "../utils/map-utils.js";
 import { logger } from "../utils/logger.js";
 import { ARN_SERVICE_TO_RESOURCE_TYPE } from "./resource-types.js";
@@ -10,6 +10,7 @@ export function buildNodeId(type: "resource" | "data", resourceType: string, nam
 export function buildGraph(parsedFiles: ParsedFile[]): DependencyGraph {
   const nodes = new Map<string, GraphNode>();
   const edges: GraphEdge[] = [];
+  const conflicts: GraphConflict[] = [];
 
   // First pass: register all nodes
   for (const file of parsedFiles) {
@@ -62,8 +63,9 @@ export function buildGraph(parsedFiles: ParsedFile[]): DependencyGraph {
           if (arnDefinerMap.has(arn)) {
             const existing = arnDefinerMap.get(arn)!;
             if (existing.id !== id) {
-              logger.warn(
-                `⚠ ARN definer conflict: "${arn}" claimed by both ${existing.id} and ${id}. ` +
+              conflicts.push({ type: "arn_definer", arn, claimants: [existing.id, id] });
+              logger.error(
+                `❌ ARN definer conflict: "${arn}" claimed by both ${existing.id} and ${id}. ` +
                 `First match wins — migration may assign ownership incorrectly. ` +
                 `Consider using --plan-dir for authoritative dependency resolution.`,
               );
@@ -146,7 +148,7 @@ export function buildGraph(parsedFiles: ParsedFile[]): DependencyGraph {
     return true;
   });
 
-  return { nodes, edges: uniqueEdges };
+  return { nodes, edges: uniqueEdges, conflicts };
 }
 
 export function detectCycles(graph: DependencyGraph): string[][] {

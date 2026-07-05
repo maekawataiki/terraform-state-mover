@@ -23,9 +23,16 @@ export interface GraphEdge {
   label?: string;
 }
 
+export interface GraphConflict {
+  type: "arn_definer";
+  arn: string;
+  claimants: string[];
+}
+
 export interface DependencyGraph {
   nodes: Map<string, GraphNode>;
   edges: GraphEdge[];
+  conflicts?: GraphConflict[];
 }
 
 export interface SerializedGraph {
