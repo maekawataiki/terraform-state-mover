@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { join, basename, relative, resolve, sep } from "node:path";
-import type { HclMoveOperation, TerraformBlock, DependencyGraph, CutEdge, FileWrite } from "../types.js";
+import type { HclMoveOperation, TerraformBlock, DependencyGraph, CutEdge, FileWrite, GraphableBlock } from "../types.js";
 import { logger } from "../utils/logger.js";
 import { CliError, formatError } from "../utils/error.js";
 import { getOrCreate } from "../utils/map-utils.js";
@@ -153,7 +153,7 @@ export async function planBlockMoves(input: BlockMoveInput): Promise<BlockMoveRe
       );
     }
 
-    const block: TerraformBlock = {
+    const block: GraphableBlock = {
       type: "resource",
       resourceType: node.resourceType,
       name: node.name,
@@ -246,7 +246,7 @@ export async function planBlockMoves(input: BlockMoveInput): Promise<BlockMoveRe
     );
 
     if (realBlock) {
-      move.block = realBlock;
+      move.block = realBlock as GraphableBlock;
       locatedMoves.push(move);
       getOrCreate(targetContents, move.targetFilePath, () => []).push(blockToHcl(realBlock));
     } else {

@@ -1,6 +1,7 @@
 import type { ParsedFile, DependencyGraph, GraphNode, GraphEdge, SerializedGraph } from "../types.js";
 import { getOrCreate } from "../utils/map-utils.js";
 import { logger } from "../utils/logger.js";
+import { ARN_SERVICE_TO_RESOURCE_TYPE } from "./resource-types.js";
 
 export function buildNodeId(type: "resource" | "data", resourceType: string, name: string, repo: string): string {
   return `${repo}:${type}.${resourceType}.${name}`;
@@ -28,18 +29,6 @@ export function buildGraph(parsedFiles: ParsedFile[]): DependencyGraph {
   }
 
   // Build ARN→definer map: identify which resource "owns" each ARN
-  const arnServiceTypeMap: Record<string, string> = {
-    iam: "aws_iam_role",
-    s3: "aws_s3_bucket",
-    rds: "aws_db_instance",
-    lambda: "aws_lambda_function",
-    dynamodb: "aws_dynamodb_table",
-    sqs: "aws_sqs_queue",
-    sns: "aws_sns_topic",
-    eks: "aws_eks_cluster",
-    kinesis: "aws_kinesis_stream",
-  };
-
   const arnDefinerMap = new Map<string, { id: string; repo: string }>();
   const normalizeToken = (token: string): string => token.replace(/-/g, "_").toLowerCase();
   for (const file of parsedFiles) {
@@ -49,7 +38,7 @@ export function buildGraph(parsedFiles: ParsedFile[]): DependencyGraph {
         // Extract service from ARN: arn:aws:{service}:...
         const arnParts = arn.split(":");
         const arnService = arnParts[2];
-        const expectedType = arnServiceTypeMap[arnService];
+        const expectedType = ARN_SERVICE_TO_RESOURCE_TYPE[arnService];
         // The definer is identified if the resource type matches the ARN service
         // OR if the resource name matches the LAST segment of the ARN path.
         // Only the last segment is checked because it represents the actual

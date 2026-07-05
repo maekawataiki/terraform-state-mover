@@ -231,7 +231,7 @@ export function generateShellScript(steps: MigrationStep[]): string {
 
   for (const step of steps) {
     lines.push(`# ${step.description}`);
-    if (step.command) {
+    if ("command" in step) {
       lines.push(step.command);
     }
     lines.push("");

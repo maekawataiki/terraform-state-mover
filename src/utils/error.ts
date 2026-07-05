@@ -33,7 +33,7 @@ export function formatError(error: unknown): string {
 }
 
 /** Available preset names */
-const VALID_PRESETS = ["gatekeeper", "terralith", "spaghetti"] as const;
+const VALID_PRESETS = ["gatekeeper", "terralith", "spaghetti", "cross-account", "data-layer"] as const;
 export type PresetName = (typeof VALID_PRESETS)[number];
 
 /**

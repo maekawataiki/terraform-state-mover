@@ -1,20 +1,13 @@
 import type { Command } from "commander";
 import { writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { scanDirectory } from "../parser/hcl-parser.js";
-import { scanCrossplaneDirectory } from "../parser/crossplane-parser.js";
-import { buildGraph, serializeGraph } from "../analyzer/dependency-graph.js";
+import { serializeGraph } from "../analyzer/dependency-graph.js";
 import { toGraphvizBefore, toGraphvizAfter } from "../reporter/graphviz.js";
-import { detectArns, groupByService, getUnresolvedArns } from "../analyzer/arn-detector.js";
+import { groupByService, getUnresolvedArns } from "../analyzer/arn-detector.js";
 import { createMigrationPlan } from "../planner/migration-planner.js";
 import { generateMarkdownReport } from "../reporter/markdown-reporter.js";
-import { enrichWithState } from "../state/state-reader.js";
-import { validateDirectory, validateFile } from "../utils/error.js";
 import { logger } from "../utils/logger.js";
-import { loadConfigFile, buildNamespaceConfig } from "../config/config-loader.js";
-import { logParserWarnings, resolvePresetConfig, loadStateDir, warnNoStateDir, logUnresolvedReferences } from "./shared.js";
-import { enrichGraphWithPlan, loadPlanDir } from "../state/plan-parser.js";
-import type { NamespaceConfig, ParsedFile } from "../types.js";
+import { buildCommandContext } from "./shared.js";
 
 export function registerAnalyzeCommand(program: Command): void {
   program
@@ -28,57 +21,23 @@ export function registerAnalyzeCommand(program: Command): void {
     .action(async (paths: string[], cmdOpts) => {
       const opts = program.opts();
 
-      for (const p of paths) {
-        await validateDirectory(p);
-      }
+      const ctx = await buildCommandContext({
+        paths,
+        preset: cmdOpts.preset,
+        configFile: opts.config,
+        stateDir: cmdOpts.stateDir,
+        planDir: cmdOpts.planDir,
+        includeCrossplane: cmdOpts.includeCrossplane,
+      });
 
-      let nsConfig: NamespaceConfig | undefined;
-      let templateSuffix: string | undefined;
-      if (opts.config) {
-        await validateFile(opts.config);
-        const fileConfig = await loadConfigFile(opts.config);
-        nsConfig = buildNamespaceConfig(fileConfig);
-      } else if (cmdOpts.preset) {
-        ({ config: nsConfig, templateSuffix } = resolvePresetConfig(cmdOpts.preset));
-      }
-
-      let parsedFiles: ParsedFile[] = [];
-      for (const p of paths) {
-        parsedFiles.push(...await scanDirectory(p));
-        if (cmdOpts.includeCrossplane) {
-          parsedFiles.push(...await scanCrossplaneDirectory(p));
-        }
-      }
-
-      let stateFiles: Awaited<ReturnType<typeof loadStateDir>> | undefined;
-      if (cmdOpts.stateDir) {
-        stateFiles = await loadStateDir(cmdOpts.stateDir);
-        parsedFiles = enrichWithState(parsedFiles, stateFiles);
-      } else {
-        warnNoStateDir();
-      }
-
-      logParserWarnings(parsedFiles);
-
-      let graph = buildGraph(parsedFiles);
-
-      // Enrich graph with plan-based dependencies (higher precision than static analysis)
-      if (cmdOpts.planDir) {
-        const plans = await loadPlanDir(cmdOpts.planDir);
-        for (const [repo, plan] of plans) {
-          graph = enrichGraphWithPlan({ graph, parsedPlan: plan, repo });
-        }
-      }
-
-      logUnresolvedReferences(graph);
-      const arns = detectArns(parsedFiles);
-      const byService = groupByService(arns);
-      const unresolved = getUnresolvedArns(arns);
+      const { graph, arnRefs, stateFiles, parsedFiles, nsConfig, templateSuffix } = ctx;
+      const byService = groupByService(arnRefs);
+      const unresolved = getUnresolvedArns(arnRefs);
 
       logger.log(`\n=== Dependency Analysis ===`);
       logger.log(`Resources: ${graph.nodes.size}`);
       logger.log(`Edges: ${graph.edges.length}`);
-      logger.log(`ARN references: ${arns.length}`);
+      logger.log(`ARN references: ${arnRefs.length}`);
       logger.log(`Unresolved ARNs: ${unresolved.length}`);
       logger.log(`\nARNs by service:`);
       for (const [service, refs] of byService) {
@@ -96,7 +55,7 @@ export function registerAnalyzeCommand(program: Command): void {
         logger.log(`Graphs written to ${join(opts.outputDir, "graph-before.dot")}, graph-after.dot`);
 
         const plan = createMigrationPlan(graph, nsConfig, stateFiles);
-        const report = generateMarkdownReport({ graph, arnRefs: arns, plan, config: nsConfig, templateSuffix, parsedFiles });
+        const report = generateMarkdownReport({ graph, arnRefs, plan, config: nsConfig, templateSuffix, parsedFiles });
         await writeFile(join(opts.outputDir, "report.md"), report);
         logger.log(`Report written to ${join(opts.outputDir, "report.md")}`);
 

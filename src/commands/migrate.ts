@@ -1,20 +1,12 @@
 import type { Command } from "commander";
 import { writeFile, mkdir, readFile } from "node:fs/promises";
-import { join, resolve, basename, relative, dirname } from "node:path";
-import { scanDirectory } from "../parser/hcl-parser.js";
-import { buildGraph } from "../analyzer/dependency-graph.js";
-import { detectArns } from "../analyzer/arn-detector.js";
-import { enrichWithState } from "../state/state-reader.js";
+import { join, basename, relative, dirname } from "node:path";
 import { findCrossNamespaceEdges } from "../planner/cut-finder.js";
 import { planMigration, applyMigration } from "../planner/hcl-migrator.js";
 import { generateUnifiedDiff } from "../planner/code-rewriter.js";
 import { generateRollbackPlan } from "../planner/rollback-generator.js";
-import { validateDirectory, validateFile } from "../utils/error.js";
 import { logger } from "../utils/logger.js";
-import { loadConfigFile, buildNamespaceConfig } from "../config/config-loader.js";
-import { logParserWarnings, resolvePresetConfig, loadStateDir, warnNoStateDir, logUnresolvedReferences } from "./shared.js";
-import { enrichGraphWithPlan, loadPlanDir } from "../state/plan-parser.js";
-import type { NamespaceConfig, ParsedFile } from "../types.js";
+import { buildCommandContext } from "./shared.js";
 
 export function registerMigrateCommand(program: Command): void {
   program
@@ -28,57 +20,21 @@ export function registerMigrateCommand(program: Command): void {
     .option("--namespace <ns>", "Only migrate edges involving this namespace (e.g., service-api, foundation)")
     .option("--apply", "Write migration files to source repos (does NOT run terraform apply — you must do that manually after review)")
     .option("--validate", "Run terraform validate on migrated output (requires terraform binary)")
+    .option("--inject-boundary <arn>", "Inject permissions_boundary into moved IAM roles (produces plan diff)")
     .action(async (paths: string[], cmdOpts) => {
       const opts = program.opts();
 
-      for (const p of paths) {
-        await validateDirectory(p);
-      }
+      const ctx = await buildCommandContext({
+        paths,
+        preset: cmdOpts.preset,
+        configFile: opts.config,
+        stateDir: cmdOpts.stateDir,
+        planDir: cmdOpts.planDir,
+      });
 
-      let nsConfig: NamespaceConfig | undefined;
-      if (opts.config) {
-        await validateFile(opts.config);
-        const fileConfig = await loadConfigFile(opts.config);
-        nsConfig = buildNamespaceConfig(fileConfig);
-      } else if (cmdOpts.preset) {
-        ({ config: nsConfig } = resolvePresetConfig(cmdOpts.preset));
-      }
+      const { graph, arnRefs, basePaths, stateFiles, nsConfig } = ctx;
 
-      // Build basePaths map (repo name -> absolute path)
-      const basePaths = new Map<string, string>();
-      let parsedFiles: ParsedFile[] = [];
-      for (const p of paths) {
-        const absPath = resolve(p);
-        const files = await scanDirectory(absPath);
-        parsedFiles.push(...files);
-        if (files.length > 0) {
-          basePaths.set(files[0].repo, absPath);
-        }
-      }
-
-      let stateFiles: Awaited<ReturnType<typeof loadStateDir>> | undefined;
-      if (cmdOpts.stateDir) {
-        stateFiles = await loadStateDir(cmdOpts.stateDir);
-        parsedFiles = enrichWithState(parsedFiles, stateFiles);
-      } else {
-        warnNoStateDir();
-      }
-
-      logParserWarnings(parsedFiles);
-
-      let graph = buildGraph(parsedFiles);
-
-      // Enrich graph with plan-based dependencies (higher precision than static analysis)
-      if (cmdOpts.planDir) {
-        const plans = await loadPlanDir(cmdOpts.planDir);
-        for (const [repo, plan] of plans) {
-          graph = enrichGraphWithPlan({ graph, parsedPlan: plan, repo });
-        }
-      }
-
-      logUnresolvedReferences(graph);
       let cutEdges = findCrossNamespaceEdges(graph, nsConfig);
-      const arnRefs = detectArns(parsedFiles);
 
       // Filter by namespace if specified
       if (cmdOpts.namespace) {
@@ -104,6 +60,7 @@ export function registerMigrateCommand(program: Command): void {
         stateFiles,
         movedBlockMode: cmdOpts.mode as "moved" | "import" | "tfmigrate",
         dryRun: !cmdOpts.apply,
+        injectBoundaryArn: cmdOpts.injectBoundary,
       });
 
       // Summary

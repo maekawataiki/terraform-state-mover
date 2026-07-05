@@ -185,6 +185,47 @@ describe("hcl-migrator", () => {
       expect(result.summary.outputsGenerated).toBe(0);
       expect(result.fileWrites).toHaveLength(0);
     });
+
+    it("includes boundary variable declarations and fileWrites when --inject-boundary used", async () => {
+      const { infraDir, serviceDir, graph, cutEdges, arnRefs, basePaths } = createTestScenario();
+
+      await mkdir(infraDir, { recursive: true });
+      await mkdir(serviceDir, { recursive: true });
+
+      await writeFile(join(infraDir, "main.tf"), `resource "aws_iam_role" "api_lambda_exec" {
+  name               = "api-lambda-exec"
+  assume_role_policy = "{}"
+}
+`);
+
+      await writeFile(join(serviceDir, "main.tf"), `resource "aws_lambda_function" "api" {
+  function_name = "api"
+  role          = "arn:aws:iam::123456789012:role/api-lambda-exec"
+  runtime       = "nodejs18.x"
+}
+`);
+
+      const boundaryArn = "arn:aws:iam::123456789012:policy/ServiceBoundary";
+      const result = await planMigration({
+        graph,
+        cutEdges,
+        arnRefs,
+        basePaths,
+        injectBoundaryArn: boundaryArn,
+      });
+
+      // Should include boundary variable declaration
+      const boundaryVarDecl = result.variableDeclarations.find((v) => v.name === "permissions_boundary_arn");
+      expect(boundaryVarDecl).toBeDefined();
+      expect(boundaryVarDecl!.repo).toBe("service-api");
+      expect(boundaryVarDecl!.filePath).toContain("boundary-variables.tf");
+
+      // Should include fileWrite for boundary-variables.tf with default value
+      const boundaryFileWrite = result.fileWrites.find((fw) => fw.filePath.includes("boundary-variables.tf"));
+      expect(boundaryFileWrite).toBeDefined();
+      expect(boundaryFileWrite!.content).toContain(`default     = "${boundaryArn}"`);
+      expect(boundaryFileWrite!.content).toContain('variable "permissions_boundary_arn"');
+    });
   });
 
   describe("applyMigration", () => {

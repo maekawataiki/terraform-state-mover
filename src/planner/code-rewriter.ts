@@ -1,5 +1,6 @@
 import { createTwoFilesPatch } from "diff";
 import type { ArnReference, CodeDiff, RewriteResult } from "../types.js";
+import { ARN_SERVICE_TO_RESOURCE_TYPE } from "../analyzer/resource-types.js";
 
 /**
  * Sanitize a string into a valid Terraform/HCL identifier.
@@ -35,17 +36,7 @@ export function arnToVariable(arn: string, name: string): string {
 }
 
 function getDataSourceType(service: string): string {
-  const mapping: Record<string, string> = {
-    iam: "aws_iam_role",
-    s3: "aws_s3_bucket",
-    rds: "aws_db_instance",
-    lambda: "aws_lambda_function",
-    dynamodb: "aws_dynamodb_table",
-    sqs: "aws_sqs_queue",
-    sns: "aws_sns_topic",
-    eks: "aws_eks_cluster",
-  };
-  return mapping[service] || `aws_${service}_resource`;
+  return ARN_SERVICE_TO_RESOURCE_TYPE[service] || `aws_${service}_resource`;
 }
 
 function getDataSourceReference(service: string, name: string): string {

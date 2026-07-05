@@ -1,42 +1,10 @@
 import type { GraphNode, Namespace, NamespaceConfig } from "../types.js";
-
-const FOUNDATION_TYPES = [
-  "aws_organizations_organization",
-  "aws_organizations_account",
-  "aws_organizations_organizational_unit",
-  "aws_organizations_policy",
-  "aws_organizations_policy_attachment",
-];
-
-const FOUNDATION_PATTERNS = [/^aws_organizations_/];
-
-const PLATFORM_TYPES = [
-  "aws_vpc",
-  "aws_subnet",
-  "aws_internet_gateway",
-  "aws_nat_gateway",
-  "aws_route_table",
-  "aws_route_table_association",
-  "aws_eks_cluster",
-  "aws_eks_node_group",
-  "aws_ecs_cluster",
-  "aws_elasticache_cluster",
-  "aws_cloudfront_distribution",
-];
-
-const SERVICE_TYPES = [
-  "aws_lambda_function",
-  "aws_db_instance",
-  "aws_rds_cluster",
-  "aws_sqs_queue",
-  "aws_sns_topic",
-  "aws_dynamodb_table",
-  "aws_s3_bucket",
-  "aws_ecs_service",
-  "aws_ecs_task_definition",
-  "aws_api_gateway_rest_api",
-  "aws_apigatewayv2_api",
-];
+import {
+  FOUNDATION_TYPES,
+  FOUNDATION_PATTERNS,
+  PLATFORM_TYPES,
+  SERVICE_TYPES,
+} from "./resource-types.js";
 
 /** Well-known prefixes for inferring namespace from repo names */
 const FOUNDATION_REPO_PATTERNS = [/^infra-foundation/, /^org-/, /^scp-/];
@@ -91,14 +59,14 @@ export function classifyResource(node: GraphNode, config?: NamespaceConfig): Nam
   }
 
   // Foundation: organizations and SCPs
-  if (FOUNDATION_TYPES.includes(node.resourceType)) return "foundation";
+  if (FOUNDATION_TYPES.has(node.resourceType)) return "foundation";
   if (FOUNDATION_PATTERNS.some((p) => p.test(node.resourceType))) return "foundation";
   if (node.resourceType === "aws_iam_policy" && /boundary|scp|permission.?boundary/i.test(node.name)) {
     return "foundation";
   }
 
   // Platform: shared infrastructure
-  if (PLATFORM_TYPES.includes(node.resourceType)) return "platform";
+  if (PLATFORM_TYPES.has(node.resourceType)) return "platform";
 
   // --- Repo-based grouping (new default behavior) ---
   if (groupByRepo) {
@@ -107,7 +75,7 @@ export function classifyResource(node: GraphNode, config?: NamespaceConfig): Nam
     if (repoNs) return repoNs;
 
     // Service-type resources: group by repo
-    if (SERVICE_TYPES.includes(node.resourceType)) {
+    if (SERVICE_TYPES.has(node.resourceType)) {
       return repoToServiceNamespace(node.repo);
     }
 
@@ -122,7 +90,7 @@ export function classifyResource(node: GraphNode, config?: NamespaceConfig): Nam
   }
 
   // --- Legacy per-resource behavior (groupByRepo: false) ---
-  if (SERVICE_TYPES.includes(node.resourceType)) {
+  if (SERVICE_TYPES.has(node.resourceType)) {
     return `service-${node.name}`;
   }
 

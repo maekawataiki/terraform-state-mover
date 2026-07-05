@@ -1,16 +1,10 @@
 import { join } from "node:path";
-import type { CutEdge, DependencyGraph, FileWrite, MovedBlock, ImportBlock, RemovedBlock, GraphNode } from "../types.js";
+import type { CutEdge, DependencyGraph, FileWrite, MovedBlock, ImportBlock, RemovedBlock, GraphNode, RefactorMode } from "../types.js";
 import type { StateFile } from "../state/state-reader.js";
 import { buildResourceIdMap } from "./migration-planner.js";
 import { getOrCreate } from "../utils/map-utils.js";
 
-/**
- * Mode determines which Terraform refactoring mechanism to use:
- * - "moved": TF 1.5+ moved blocks (same-state renames only)
- * - "import": TF 1.7+ import blocks in target + removed blocks in source (cross-state)
- * - "tfmigrate": No TF blocks generated, rely on migrate.hcl for state operations
- */
-export type RefactorMode = "moved" | "import" | "tfmigrate";
+export type { RefactorMode } from "../types.js";
 
 export interface MovedBlockInput {
   graph: DependencyGraph;

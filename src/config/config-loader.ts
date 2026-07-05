@@ -1,14 +1,8 @@
 import { readFile } from "node:fs/promises";
 import { parse as parseYaml } from "yaml";
-import type { NamespaceConfig, Namespace, GraphNode } from "../types.js";
+import type { NamespaceConfig, Namespace, GraphNode, TfMoverConfig } from "../types.js";
 
-export interface TfMoverConfig {
-  classification?: {
-    patterns?: Array<{ match: string; namespace: string }>;
-    explicit?: Record<string, string>;
-    default?: string;
-  };
-}
+export type { TfMoverConfig } from "../types.js";
 
 /**
  * Parse a .tf-mover.yaml config file content.

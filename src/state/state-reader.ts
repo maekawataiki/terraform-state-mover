@@ -1,17 +1,6 @@
-import type { ParsedFile } from "../types.js";
+import type { ParsedFile, StateResource, StateFile } from "../types.js";
 
-export interface StateResource {
-  address: string;
-  type: string;
-  name: string;
-  arn?: string;
-  attributes: Record<string, unknown>;
-}
-
-export interface StateFile {
-  resources: StateResource[];
-  repo: string;
-}
+export type { StateResource, StateFile } from "../types.js";
 
 export function parseStateJson(json: string, repo: string): StateFile {
   const state = JSON.parse(json);

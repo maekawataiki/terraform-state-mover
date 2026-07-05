@@ -23,7 +23,7 @@ Also supports **Crossplane** (Kubernetes-native IaC): scans `.yaml` manifests fo
 | **Count on Collection** | `count = length(...)` — item removal destroys N resources | Rewrite to `for_each` (detection only) | [7 Anti-Patterns](https://decodeops.substack.com/p/7-terraform-anti-patterns-quietly) |
 | **Depends On Module** | `depends_on` on a module — disables parallelism | Remove and use explicit data references (detection only) | [7 Anti-Patterns](https://decodeops.substack.com/p/7-terraform-anti-patterns-quietly) |
 | **Environment Copypasta** | dev/stg/prod are drifting copy-paste directories | Consolidate with Terragrunt/workspaces (detection only) | Terragrunt exists to solve this |
-| **Provider Coupling** | Multiple provider aliases in one state | Separate by provider boundary → cross-state migration | [HashiCorp Refactor](https://developer.hashicorp.com/terraform/language/state/refactor) |
+| **Provider Coupling** | Multiple provider aliases in one state | Separate by provider boundary → cross-state migration (`cross-account` preset) | [HashiCorp Refactor](https://developer.hashicorp.com/terraform/language/state/refactor) |
 | **Circular Remote State** | A→B→A remote_state cycles | Break cycle via shared outputs layer (detection only) | — |
 
 > **Automated fix** = this tool generates the full migration. **Detection only** = flagged in report with guidance, manual refactoring needed.
@@ -32,7 +32,7 @@ Also supports **Crossplane** (Kubernetes-native IaC): scans `.yaml` manifests fo
 
 ```bash
 pnpm install
-pnpm demo          # run all 9 example scenarios → output/
+pnpm demo          # run all 10 example scenarios → output/
 ```
 
 ### On your own repos
@@ -88,12 +88,13 @@ pnpm cli migrate ./infra-central ./service-payments \
 ```bash
 # Full code migration (recommended)
 pnpm cli migrate <paths...> [options]
-  --preset <name>        Preset config (gatekeeper, terralith, spaghetti)
+  --preset <name>        Preset config (gatekeeper, terralith, spaghetti, cross-account, data-layer)
   --state-dir <dir>      Directory with <repo>.tfstate.json files
   --namespace <ns>       Only migrate edges involving this namespace
   --mode <mode>          import (TF 1.7+, default), moved (TF 1.5+), tfmigrate (legacy)
   --apply                Write migration files to source repos (does NOT run terraform apply)
   --validate             Run terraform validate on output
+  --inject-boundary <arn>  Inject permissions_boundary into moved IAM roles (produces plan diff)
   -o <dir>               Output directory for generated files
 
 # Analyze repos and generate diagnosis report
@@ -169,6 +170,7 @@ pnpm demo:gatekeeper-large  # centralized IAM bottleneck (7 services)
 pnpm demo:terralith         # monolithic 33-resource state
 pnpm demo:spaghetti         # cross-state remote_state + ARN tangle
 pnpm demo:cross-account     # multi-account provider alias mess
+pnpm demo:data-layer        # stateful/stateless separation
 pnpm demo:god-module        # over-abstracted module
 pnpm demo:env-copypasta     # copy-paste environments
 pnpm demo:count-antipattern # count = length(...) trap
@@ -263,7 +265,7 @@ The `tf-state-mover` skill activates automatically when you describe a Terraform
 pnpm test         # 423 tests, co-located with source
 pnpm lint         # tsc --noEmit + ESLint
 pnpm build        # compile
-pnpm demo         # run all 9 scenarios
+pnpm demo         # run all 10 scenarios
 ```
 
 Tests are co-located with their implementation (e.g., `src/parser/hcl-parser.test.ts` next to `src/parser/hcl-parser.ts`). Integration tests remain in `tests/integration/`.

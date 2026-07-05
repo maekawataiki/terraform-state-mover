@@ -20,7 +20,10 @@
 
 // Re-export types only (zero runtime cost, helps TypeScript consumers)
 export type {
+  BlockType,
+  GraphableBlockType,
   TerraformBlock,
+  GraphableBlock,
   ParsedFile,
   ArnReference,
   GraphNode,
@@ -32,7 +35,18 @@ export type {
   NamespaceConfig,
   CutEdge,
   MigrationStep,
+  StateMvStep,
+  ImportStep,
+  CodeRewriteStep,
+  VerifyStep,
   MigrationPlan,
   CodeDiff,
   RewriteResult,
+  RefactorMode,
+  StateFile,
+  StateResource,
+  ParsedPlan,
+  DetectedPattern,
+  PatternThresholds,
+  TfMoverConfig,
 } from "./types.js";

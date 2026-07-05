@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import type { MigrationStep, MigrationPlan } from "../types.js";
+import type { MigrationStep, MigrationPlan, StateMvStep } from "../types.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -61,10 +61,10 @@ export async function dryRunMigration(
 export function generateRollback(plan: MigrationPlan): string {
   const lines = ["#!/bin/bash", "set -euo pipefail", "", "# Rollback migration", ""];
 
-  const stateMovSteps = plan.steps.filter((s) => s.type === "state_mv" && s.command);
+  const stateMovSteps = plan.steps.filter((s): s is StateMvStep => s.type === "state_mv");
   for (const step of stateMovSteps.reverse()) {
     // Reverse the state mv: swap -state and -state-out
-    const reversed = step.command!
+    const reversed = step.command
       .replace(/-state=([^\s]+)\s+-state-out=([^\s]+)/, "-state=$2 -state-out=$1");
     lines.push(`# Rollback: ${step.description}`);
     lines.push(reversed);

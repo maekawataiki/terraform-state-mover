@@ -1,12 +1,20 @@
 import { readFile, readdir } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { gatekeeperModelConfig, gatekeeperModelReportTemplate } from "../presets/gatekeeper.js";
 import { terralithConfig, terralithReportTemplate } from "../presets/terralith.js";
 import { spaghettiConfig, spaghettiReportTemplate } from "../presets/spaghetti.js";
-import { parseStateJson } from "../state/state-reader.js";
-import { validatePreset, validateDirectory, parseJson } from "../utils/error.js";
+import { crossAccountConfig, crossAccountReportTemplate } from "../presets/cross-account.js";
+import { dataLayerConfig, dataLayerReportTemplate } from "../presets/data-layer.js";
+import { parseStateJson, enrichWithState } from "../state/state-reader.js";
+import type { StateFile } from "../state/state-reader.js";
+import { validatePreset, validateDirectory, validateFile, parseJson } from "../utils/error.js";
 import { logger } from "../utils/logger.js";
-import type { NamespaceConfig, ParsedFile, DependencyGraph } from "../types.js";
+import { scanDirectory } from "../parser/hcl-parser.js";
+import { buildGraph } from "../analyzer/dependency-graph.js";
+import { enrichGraphWithPlan, loadPlanDir } from "../state/plan-parser.js";
+import { loadConfigFile, buildNamespaceConfig } from "../config/config-loader.js";
+import type { NamespaceConfig, ParsedFile, DependencyGraph, ArnReference } from "../types.js";
+import { detectArns } from "../analyzer/arn-detector.js";
 
 export function logParserWarnings(parsedFiles: ParsedFile[]): void {
   const allWarnings = parsedFiles.flatMap((f) => f.warnings || []);
@@ -67,6 +75,10 @@ export function resolvePresetConfig(presetName: string | undefined): { config?: 
       return { config: terralithConfig, templateSuffix: terralithReportTemplate };
     case "spaghetti":
       return { config: spaghettiConfig, templateSuffix: spaghettiReportTemplate };
+    case "cross-account":
+      return { config: crossAccountConfig, templateSuffix: crossAccountReportTemplate };
+    case "data-layer":
+      return { config: dataLayerConfig, templateSuffix: dataLayerReportTemplate };
   }
 }
 
@@ -95,4 +107,104 @@ export async function loadStateDir(dir: string) {
     }
   }
   return stateFiles;
+}
+
+// ---------------------------------------------------------------------------
+// Shared context builder — eliminates duplication between analyze/migrate/plan/visualize
+// ---------------------------------------------------------------------------
+
+export interface BuildContextInput {
+  paths: string[];
+  /** Preset name (e.g. "gatekeeper") */
+  preset?: string;
+  /** Path to .tf-mover.yaml config file */
+  configFile?: string;
+  /** Directory with <repo>.tfstate.json files */
+  stateDir?: string;
+  /** Directory with <repo>.plan.json files */
+  planDir?: string;
+  /** Also scan Crossplane YAML files */
+  includeCrossplane?: boolean;
+}
+
+export interface CommandContext {
+  parsedFiles: ParsedFile[];
+  graph: DependencyGraph;
+  arnRefs: ArnReference[];
+  stateFiles?: StateFile[];
+  basePaths: Map<string, string>;
+  nsConfig?: NamespaceConfig;
+  templateSuffix?: string;
+}
+
+/**
+ * Build the shared analysis context used by all commands.
+ * Handles: path validation, config resolution, scanning, state enrichment,
+ * graph building, plan enrichment, and warning output.
+ */
+export async function buildCommandContext(input: BuildContextInput): Promise<CommandContext> {
+  const { paths, preset, configFile, stateDir, planDir, includeCrossplane } = input;
+
+  // 1. Validate paths
+  for (const p of paths) {
+    await validateDirectory(p);
+  }
+
+  // 2. Resolve namespace config
+  let nsConfig: NamespaceConfig | undefined;
+  let templateSuffix: string | undefined;
+  if (configFile) {
+    await validateFile(configFile);
+    const fileConfig = await loadConfigFile(configFile);
+    nsConfig = buildNamespaceConfig(fileConfig);
+  } else if (preset) {
+    ({ config: nsConfig, templateSuffix } = resolvePresetConfig(preset));
+  }
+
+  // 3. Scan directories → parsedFiles + basePaths
+  const basePaths = new Map<string, string>();
+  let parsedFiles: ParsedFile[] = [];
+  for (const p of paths) {
+    const absPath = resolve(p);
+    const files = await scanDirectory(absPath);
+    parsedFiles.push(...files);
+    if (files.length > 0) {
+      basePaths.set(files[0].repo, absPath);
+    }
+  }
+
+  // 3b. Optionally scan Crossplane YAMLs
+  if (includeCrossplane) {
+    const { scanCrossplaneDirectory } = await import("../parser/crossplane-parser.js");
+    for (const p of paths) {
+      parsedFiles.push(...await scanCrossplaneDirectory(p));
+    }
+  }
+
+  // 4. Load state + enrich
+  let stateFiles: StateFile[] | undefined;
+  if (stateDir) {
+    stateFiles = await loadStateDir(stateDir);
+    parsedFiles = enrichWithState(parsedFiles, stateFiles);
+  } else {
+    warnNoStateDir();
+  }
+
+  logParserWarnings(parsedFiles);
+
+  // 5. Build graph + plan enrichment
+  let graph = buildGraph(parsedFiles);
+  if (planDir) {
+    const plans = await loadPlanDir(planDir);
+    for (const [repo, plan] of plans) {
+      graph = enrichGraphWithPlan({ graph, parsedPlan: plan, repo });
+    }
+  }
+
+  logUnresolvedReferences(graph);
+
+  // 6. Detect ARNs
+  const arnRefs = detectArns(parsedFiles);
+
+  return { parsedFiles, graph, arnRefs, stateFiles, basePaths, nsConfig, templateSuffix };
 }
