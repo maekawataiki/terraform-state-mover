@@ -240,14 +240,15 @@ describe("migration-planner (legacy)", () => {
   describe("generateShellScript", () => {
     it("generates a valid shell script", () => {
       const steps = [
-        { type: "state_mv" as const, command: "terraform state mv 'aws_vpc.main' 'aws_vpc.main'", description: "Move VPC" },
+        { type: "state_mv" as const, command: "terraform state mv -state='source/terraform.tfstate' -state-out='target/terraform.tfstate' 'aws_vpc.main' 'aws_vpc.main'", description: "Move VPC from source to target" },
         { type: "verify" as const, command: "terraform plan", description: "Verify" },
       ];
       const script = generateShellScript(steps);
       expect(script).toContain("#!/bin/bash");
       expect(script).toContain("set -euo pipefail");
       expect(script).toContain("terraform state mv");
-      expect(script).toContain("terraform plan");
+      expect(script).toContain("state pull");
+      expect(script).toContain("state push");
     });
   });
 

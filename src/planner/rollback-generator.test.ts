@@ -122,8 +122,8 @@ describe("generateRollbackPlan", () => {
 
     const rollback = generateRollbackPlan(result);
 
-    // Should have: 1 import file (infra-central), 2 removed files (service-api, service-payments)
-    expect(rollback.fileWrites).toHaveLength(3);
+    // Should have: 1 import file (infra-central), 2 removed files (service-api, service-payments), 1 rollback.sh
+    expect(rollback.fileWrites).toHaveLength(4);
 
     const importFile = rollback.fileWrites.find((fw) => fw.filePath === "infra-central/rollback-imports.tf");
     expect(importFile).toBeDefined();
@@ -156,5 +156,54 @@ describe("generateRollbackPlan", () => {
     expect(rollback.steps).toContain("Run terraform plan in both repos to verify: expect no changes");
     expect(rollback.steps.some((s) => s.includes("re-import resources"))).toBe(true);
     expect(rollback.steps.some((s) => s.includes("drop resources without destroying"))).toBe(true);
+  });
+
+  it("resolves resource IDs from forward migration's import blocks", () => {
+    const result: MigrateResult = {
+      ...createEmptyResult(),
+      importBlocks: [
+        { to: "aws_iam_role.api_role", id: "api-role-prod", repo: "service-api" },
+      ],
+      removedBlocks: [
+        { from: "aws_iam_role.api_role", repo: "infra-central", destroy: false },
+      ],
+      summary: { resourcesMoved: 1, arnsRewritten: 0, outputsGenerated: 0, filesModified: 2 },
+    };
+
+    const rollback = generateRollbackPlan(result);
+
+    // The reverse import (back into infra-central) should use the real ID
+    const importFile = rollback.fileWrites.find((fw) => fw.filePath.includes("rollback-imports.tf"));
+    expect(importFile).toBeDefined();
+    expect(importFile!.content).toContain('id = "api-role-prod"');
+    expect(importFile!.content).not.toContain("<RESOURCE_ID>");
+  });
+
+  it("generates rollback.sh with correct execution order", () => {
+    const result: MigrateResult = {
+      ...createEmptyResult(),
+      importBlocks: [
+        { to: "aws_iam_role.api_role", id: "api-role-prod", repo: "service-api" },
+      ],
+      removedBlocks: [
+        { from: "aws_iam_role.api_role", repo: "infra-central", destroy: false },
+      ],
+      summary: { resourcesMoved: 1, arnsRewritten: 0, outputsGenerated: 0, filesModified: 2 },
+    };
+
+    const rollback = generateRollbackPlan(result);
+
+    const rollbackScript = rollback.fileWrites.find((fw) => fw.filePath === "rollback.sh");
+    expect(rollbackScript).toBeDefined();
+    expect(rollbackScript!.content).toContain("#!/bin/bash");
+    expect(rollbackScript!.content).toContain("set -euo pipefail");
+    // Step 1: release from target
+    expect(rollbackScript!.content).toContain("Release resources from target state");
+    expect(rollbackScript!.content).toContain('terraform -chdir="service-api" apply');
+    // Step 2: re-import into source
+    expect(rollbackScript!.content).toContain("Re-import resources into source state");
+    expect(rollbackScript!.content).toContain('terraform -chdir="infra-central" apply');
+    // Step 3: verify
+    expect(rollbackScript!.content).toContain("plan -detailed-exitcode");
   });
 });
