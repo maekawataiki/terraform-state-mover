@@ -351,5 +351,85 @@ resource "aws_iam_role" "shared_role" {
       expect(result.moves).toHaveLength(0);
       expect(result.fileWrites).toHaveLength(0);
     });
+
+    it("preserves heredoc content when moving blocks", async () => {
+      const infraDir = join(testDir, "infra-central");
+      const serviceDir = join(testDir, "service-api");
+      await mkdir(infraDir, { recursive: true });
+      await mkdir(serviceDir, { recursive: true });
+
+      const heredocContent = `{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Effect": "Allow",
+    "Principal": {"Service": "lambda.amazonaws.com"},
+    "Action": "sts:AssumeRole"
+  }]
+}`;
+
+      const mainTf = `resource "aws_iam_role" "api_lambda_exec" {
+  name = "api-lambda-exec"
+
+  assume_role_policy = <<-EOF
+${heredocContent}
+EOF
+}
+`;
+      await writeFile(join(infraDir, "main.tf"), mainTf);
+
+      const nodes = new Map<string, GraphNode>([
+        ["infra-central:aws_iam_role.api_lambda_exec", {
+          id: "infra-central:aws_iam_role.api_lambda_exec",
+          type: "resource",
+          resourceType: "aws_iam_role",
+          name: "api_lambda_exec",
+          repo: "infra-central",
+          filePath: join(infraDir, "main.tf"),
+          namespace: "service-api",
+        }],
+        ["service-api:aws_lambda_function.api", {
+          id: "service-api:aws_lambda_function.api",
+          type: "resource",
+          resourceType: "aws_lambda_function",
+          name: "api",
+          repo: "service-api",
+          filePath: join(serviceDir, "main.tf"),
+          namespace: "service-api",
+        }],
+      ]);
+
+      const edges: GraphEdge[] = [{
+        from: "service-api:aws_lambda_function.api",
+        to: "infra-central:aws_iam_role.api_lambda_exec",
+        type: "arn",
+      }];
+
+      const graph: DependencyGraph = { nodes, edges };
+
+      const cutEdges: CutEdge[] = [{
+        edge: edges[0],
+        fromNamespace: "service-api",
+        toNamespace: "service-api",
+        score: 1,
+      }];
+
+      const basePaths = new Map([
+        ["infra-central", infraDir],
+        ["service-api", serviceDir],
+      ]);
+
+      const result = await planBlockMoves({ graph, cutEdges, basePaths });
+
+      expect(result.moves).toHaveLength(1);
+
+      // Target file should contain the heredoc content intact
+      const targetWrite = result.fileWrites.find((fw) => fw.operation === "create");
+      expect(targetWrite).toBeDefined();
+      expect(targetWrite!.content).toContain("assume_role_policy");
+      expect(targetWrite!.content).toContain("<<-EOF");
+      expect(targetWrite!.content).toContain("sts:AssumeRole");
+      expect(targetWrite!.content).toContain("lambda.amazonaws.com");
+      expect(targetWrite!.content).toContain("EOF");
+    });
   });
 });

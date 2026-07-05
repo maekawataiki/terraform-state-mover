@@ -52,6 +52,27 @@ describe("dependency-graph", () => {
       expect(graph.edges.some((e) => e.to === "repo1:resource.aws_vpc.main")).toBe(true);
     });
 
+    it("detects references to resource types containing digits (e.g. aws_route53_zone, aws_s3_bucket)", () => {
+      const files = [makeParsedFile([
+        { type: "resource", resourceType: "aws_route53_zone", name: "main", body: "{ name = \"example.com\" }" },
+        { type: "resource", resourceType: "aws_route53_record", name: "www", body: "{ zone_id = aws_route53_zone.main.zone_id }" },
+        { type: "resource", resourceType: "aws_s3_bucket", name: "logs", body: "{ bucket = \"logs\" }" },
+        { type: "resource", resourceType: "aws_s3_bucket_policy", name: "logs_policy", body: "{ bucket = aws_s3_bucket.logs.id }" },
+      ])];
+      const graph = buildGraph(files);
+      expect(graph.edges.some((e) => e.to === "repo1:resource.aws_route53_zone.main")).toBe(true);
+      expect(graph.edges.some((e) => e.to === "repo1:resource.aws_s3_bucket.logs")).toBe(true);
+    });
+
+    it("detects data source references with digits in type (e.g. data.aws_route53_zone)", () => {
+      const files = [makeParsedFile([
+        { type: "data", resourceType: "aws_route53_zone", name: "main", body: "{ name = \"example.com\" }" },
+        { type: "resource", resourceType: "aws_route53_record", name: "www", body: "{ zone_id = data.aws_route53_zone.main.zone_id }" },
+      ])];
+      const graph = buildGraph(files);
+      expect(graph.edges.some((e) => e.to === "repo1:data.aws_route53_zone.main")).toBe(true);
+    });
+
     it("detects cross-repo ARN edges", () => {
       const arn = "arn:aws:iam::123456789012:role/SharedRole";
       const file1 = makeParsedFile([

@@ -42,6 +42,11 @@ export async function planMigration(input: MigrateInput): Promise<MigrateResult>
     planBlockMoves({ graph, cutEdges, basePaths }),
   );
 
+  // Surface individual block-move failures (e.g. file not found, block not located)
+  if (blockMoveResult) {
+    collectBlockMoveFailures(blockMoveResult, "block-moves", errors);
+  }
+
   // --- Step 1b: Boundary injection (post-processing on block moves) ---
   let boundaryVariableDeclarations: VariableDeclaration[] = [];
   let boundaryFileWrites: FileWrite[] = [];
@@ -137,23 +142,22 @@ async function runStep<T>(
   fn: () => Promise<T>,
 ): Promise<T | null> {
   try {
-    const result = await fn();
-    // Surface sub-step failures (e.g. individual block move failures)
-    if (result && typeof result === "object" && "failedMoves" in result) {
-      const failedMoves = (result as { failedMoves: Array<{ resourceType: string; name: string; sourceRepo: string; targetRepo: string; reason: string }> }).failedMoves;
-      for (const failure of failedMoves) {
-        errors.push({
-          step: stepName,
-          error: `${failure.resourceType}.${failure.name} (${failure.sourceRepo} → ${failure.targetRepo}): ${failure.reason}`,
-        });
-      }
-    }
-    return result;
+    return await fn();
   } catch (error: unknown) {
     const msg = formatError(error);
     errors.push({ step: stepName, error: msg });
     logger.error(`⚠ Step (${stepName}) failed: ${msg}`);
     return null;
+  }
+}
+
+/** Surface individual block-move failures into the error list. */
+function collectBlockMoveFailures(result: BlockMoveResult, stepName: string, errors: MigrationStepError[]): void {
+  for (const failure of result.failedMoves) {
+    errors.push({
+      step: stepName,
+      error: `${failure.resourceType}.${failure.name} (${failure.sourceRepo} → ${failure.targetRepo}): ${failure.reason}`,
+    });
   }
 }
 

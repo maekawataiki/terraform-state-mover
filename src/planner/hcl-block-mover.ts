@@ -4,10 +4,40 @@ import type { HclMoveOperation, TerraformBlock, DependencyGraph, CutEdge, FileWr
 import { logger } from "../utils/logger.js";
 import { CliError, formatError } from "../utils/error.js";
 import { getOrCreate } from "../utils/map-utils.js";
-import { preprocessHcl, findMatchingBrace, parseHcl, parseHclAst } from "../parser/hcl-parser.js";
+import { preprocessHcl, findMatchingBrace, parseHclAst } from "../parser/hcl-parser.js";
 
 function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Extract the full raw HCL text of a block from file content.
+ * Operates on a preprocessed copy (heredocs/comments blanked) to find brace boundaries,
+ * then slices from the original raw content to preserve heredoc/comment content intact.
+ */
+function extractBlockHcl(content: string, block: TerraformBlock): string | null {
+  const cleaned = preprocessHcl(content);
+
+  const headerPattern = block.type === "resource" || block.type === "data"
+    ? new RegExp(`^[ \\t]*${block.type}\\s+"${escapeRegExp(block.resourceType)}"\\s+"${escapeRegExp(block.name)}"\\s*\\{`, "m")
+    : new RegExp(`^[ \\t]*${block.type}\\s+"${escapeRegExp(block.name)}"\\s*\\{`, "m");
+
+  const headerMatch = headerPattern.exec(cleaned);
+  if (!headerMatch) return null;
+
+  const braceStart = cleaned.indexOf("{", headerMatch.index);
+  let braceEnd: number;
+  try {
+    braceEnd = findMatchingBrace(cleaned, braceStart, block.filePath);
+  } catch {
+    return null;
+  }
+
+  // Slice from start-of-line containing header to closing brace (inclusive) from RAW content
+  let lineStart = headerMatch.index;
+  while (lineStart > 0 && content[lineStart - 1] !== "\n") lineStart--;
+
+  return content.slice(lineStart, braceEnd + 1);
 }
 
 export interface BlockMoveInput {
@@ -239,18 +269,21 @@ export async function planBlockMoves(input: BlockMoveInput): Promise<BlockMoveRe
       continue;
     }
 
-    // Step 2: Extract original HCL body via regex parser (preserves formatting)
-    const regexBlocks = parseHcl(content, move.sourceFilePath, move.sourceRepo);
-    const realBlock = regexBlocks.find(
-      (b) => b.type === move.block.type && b.resourceType === move.block.resourceType && b.name === move.block.name,
-    );
+    // Step 2: Extract original HCL block text from raw content.
+    // Uses preprocessed (heredoc/comment-blanked) offsets to locate the block,
+    // then slices from raw content to preserve heredoc bodies intact.
+    const rawBlockText = extractBlockHcl(content, move.block);
 
-    if (realBlock) {
-      move.block = realBlock as GraphableBlock;
+    if (rawBlockText) {
+      // Update block body with the raw extracted body (everything between and including braces)
+      const braceIndex = rawBlockText.indexOf("{");
+      if (braceIndex !== -1) {
+        move.block = { ...move.block, body: rawBlockText.slice(braceIndex) } as GraphableBlock;
+      }
       locatedMoves.push(move);
-      getOrCreate(targetContents, move.targetFilePath, () => []).push(blockToHcl(realBlock));
+      getOrCreate(targetContents, move.targetFilePath, () => []).push(rawBlockText);
     } else {
-      const reason = "Regex parser could not locate block — may use unsupported syntax";
+      const reason = "Could not locate block boundaries — may use unsupported syntax";
       logger.warn(
         `⚠ ${reason}: ${move.block.resourceType}.${move.block.name} in ${move.sourceFilePath}`,
       );

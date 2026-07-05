@@ -83,7 +83,7 @@ export function buildGraph(parsedFiles: ParsedFile[]): DependencyGraph {
       const fromId = buildNodeId(block.type, block.resourceType, block.name, block.repo);
 
       // Detect data source references in body
-      const dataRefPattern = /data\.([a-z_]+)\.([a-z_][a-z0-9_]*)/g;
+      const dataRefPattern = /data\.([a-z0-9_]+)\.([a-z_][a-z0-9_]*)/g;
       let match: RegExpExecArray | null;
       while ((match = dataRefPattern.exec(block.body)) !== null) {
         const targetId = buildNodeId("data", match[1], match[2], block.repo);
@@ -93,7 +93,7 @@ export function buildGraph(parsedFiles: ParsedFile[]): DependencyGraph {
       }
 
       // Detect resource references
-      const resRefPattern = /(?<!\.)([a-z_]+)\.([a-z_][a-z0-9_]*)\.([a-z_]+)/g;
+      const resRefPattern = /(?<!\.)([a-z0-9_]+)\.([a-z_][a-z0-9_]*)\.([a-z_]+)/g;
       while ((match = resRefPattern.exec(block.body)) !== null) {
         if (["var", "local", "module", "data", "each", "self", "path", "count"].includes(match[1])) continue;
         const targetId = buildNodeId("resource", match[1], match[2], block.repo);

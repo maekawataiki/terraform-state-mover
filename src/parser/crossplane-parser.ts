@@ -1,8 +1,7 @@
 import { readFile, readdir, stat } from "node:fs/promises";
 import { join, basename } from "node:path";
 import type { TerraformBlock, ParsedFile } from "../types.js";
-
-const ARN_PATTERN = /arn:(?:aws|aws-cn|aws-us-gov):[a-z0-9-]+:[a-z0-9-]*:[0-9]*:[a-zA-Z0-9/_.\-:*]+/g;
+import { ARN_PATTERN_SIMPLE } from "../analyzer/arn-detector.js";
 
 export interface CrossplaneResource {
   apiVersion: string;
@@ -35,7 +34,7 @@ export function parseCrossplaneYaml(content: string, filePath: string, repo: str
     const _apiVersion = apiVersionMatch?.[1].trim() || "";
     const name = nameMatch?.[1].trim() || "unnamed";
 
-    const arns = [...doc.matchAll(ARN_PATTERN)].map((m) => m[0]);
+    const arns = [...doc.matchAll(ARN_PATTERN_SIMPLE)].map((m) => m[0]);
     const stringLiterals: string[] = [];
 
     // Extract forProvider fields with values
