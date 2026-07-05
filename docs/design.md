@@ -39,8 +39,8 @@ terraform-state-mover provides the **analysis layer** for Terraform state refact
 
 **Key Design Decisions:**
 
-- **Comment/heredoc preprocessing** — Before `parseHcl()` runs, `preprocessHcl(content)` replaces comments (`#`, `//`, `/* */`) and heredocs (`<<EOF ... EOF`) with whitespace while preserving line numbers. This prevents false-positive ARN detection.
-- **Regex-based parser** — A full HCL AST parser (`hcl2json`) is not used. Rationale: avoids external binary dependencies and keeps the tool zero-dependency (aside from `commander`). Trade-off: complex HCL expressions (`for`, ternary operators) may not be fully parsed.
+- **Comment/heredoc preprocessing** — Before regex fallback runs, `preprocessHcl(content)` replaces comments (`#`, `//`, `/* */`) and heredocs (`<<EOF ... EOF`) with whitespace while preserving line numbers. This prevents false-positive ARN detection and block boundary confusion.
+- **Dual-mode parser (AST primary, regex fallback)** — The primary parser uses `@cdktf/hcl2json` to produce a full HCL AST, giving accurate block boundaries, nested attribute extraction, and string literal enumeration. When hcl2json fails (malformed HCL, unsupported syntax), the parser falls back to a regex-based extractor that uses `preprocessHcl` + brace-matching to identify blocks. This ensures graceful degradation: real-world files with minor syntax issues are still partially parsed rather than completely rejected. Trade-off: the regex fallback may miss complex expressions (`for`, ternary operators, dynamic blocks).
 - **Repo inference** — `scanDirectory(path, repo?)` infers the repo name from `basename(path)` when not explicitly provided.
 
 ### analyzer/ — Graph Construction and Classification
@@ -168,10 +168,9 @@ All types are centralized in `src/types.ts`. This prevents circular dependencies
 
 ## Future Considerations
 
-- **hcl2json integration** — Optional use of the hcl2json binary for accurate AST parsing
 - **Interactive mode** — CLI wizard for reviewing and adjusting namespace classifications
 - **CI integration** — GitHub Actions / GitLab CI to post diagnosis reports as PR comments
 - **Incremental analysis** — Cache the dependency graph and re-analyze only changed files
 - **PR generation** — Auto-create PRs in source/target repos after `--apply`
 - **for_each rewrite** — Automate `count = length(...)` → `for_each` transformation
-- **Multi-backend state** — Support S3/GCS/Azure remote state fetching directly
+- **Multi-backend state** — Support S3/GCS/Azure remote state fetching directly (currently generates pull/push scripts)
