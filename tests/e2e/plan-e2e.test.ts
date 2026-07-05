@@ -7,10 +7,11 @@ import { scanDirectory } from "../../src/parser/hcl-parser.js";
 import { buildGraph } from "../../src/analyzer/dependency-graph.js";
 
 const PLAN_OUTPUT_DIR = join(process.cwd(), "tmp/tests/plan-e2e");
+const TF_BINARY = process.env.TF_BINARY || "terraform";
 
 function hasTerraform(): boolean {
   try {
-    execSync("terraform version", { stdio: "pipe" });
+    execSync(`${TF_BINARY} version`, { stdio: "pipe" });
     return true;
   } catch {
     return false;
@@ -29,9 +30,9 @@ function generatePlanJson(dir: string): string | null {
 
   try {
     execSync(`mkdir -p ${env.TF_PLUGIN_CACHE_DIR}`, { stdio: "pipe" });
-    execSync("terraform init -backend=false -input=false", { cwd: dir, stdio: "pipe", env });
-    execSync("terraform plan -out=plan.bin -input=false -refresh=false", { cwd: dir, stdio: "pipe", env });
-    const planJson = execSync("terraform show -json plan.bin", { cwd: dir, encoding: "utf-8", env });
+    execSync(`${TF_BINARY} init -backend=false -input=false`, { cwd: dir, stdio: "pipe", env });
+    execSync(`${TF_BINARY} plan -out=plan.bin -input=false -refresh=false`, { cwd: dir, stdio: "pipe", env });
+    const planJson = execSync(`${TF_BINARY} show -json plan.bin`, { cwd: dir, encoding: "utf-8", env });
     execSync("rm -f plan.bin", { cwd: dir, stdio: "pipe" });
     return planJson;
   } catch {

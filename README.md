@@ -134,6 +134,16 @@ pnpm cli visualize <paths...> [--preset gatekeeper] [--state-dir ./states]
 | `moved` | ≥ 1.5 | `moved.tf` | Same-state address renames |
 | `tfmigrate` | Any | `migrate.hcl` only | Legacy TF, or cross-state with tfmigrate |
 
+### Compatibility
+
+| Runtime | Versions Tested | Notes |
+|---|---|---|
+| Terraform | 1.7.x, 1.9.x, latest | `import`/`removed` blocks require ≥ 1.7 |
+| OpenTofu | latest | Fully compatible; set `TF_BINARY=tofu` for E2E tests |
+| Node.js | 20, 22 | Tested on ubuntu + windows |
+
+> **OpenTofu users**: all generated HCL (import/removed/moved blocks) is OpenTofu-compatible. The tool itself doesn't call terraform — it generates files that you apply with your preferred binary.
+
 ## What Gets Generated
 
 ### `migrate` command (`-o output/`)

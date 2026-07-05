@@ -61,6 +61,21 @@ jobs:
   demo:
     runs-on: ubuntu-latest
     needs: [build]
+    strategy:
+      fail-fast: false
+      matrix:
+        terraform:
+          - version: "1.7.5"
+            name: tf-1.7
+          - version: "1.9.7"
+            name: tf-1.9
+          - version: "latest"
+            name: tf-latest
+        include:
+          - terraform:
+              version: ""
+              name: opentofu
+            tofu: true
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -70,9 +85,21 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      - uses: hashicorp/setup-terraform@v3
+      - name: Setup Terraform
+        if: ${{ !matrix.tofu }}
+        uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: 1.9.7
+          terraform_version: ${{ matrix.terraform.version }}
+      - name: Setup OpenTofu
+        if: ${{ matrix.tofu }}
+        uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: latest
+          tofu_wrapper: true
       - run: pnpm install --frozen-lockfile
-      - run: pnpm test:e2e
-      - run: pnpm demo
+      - name: Run E2E tests
+        run: pnpm test:e2e
+        env:
+          TF_BINARY: ${{ matrix.tofu && 'tofu' || 'terraform' }}
+      - name: Run demos
+        run: pnpm demo

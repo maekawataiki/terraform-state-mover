@@ -29,11 +29,14 @@ import { buildCommandContext } from "../../src/commands/shared.js";
 // Helpers
 // ---------------------------------------------------------------------------
 
+// Support TF_BINARY env for OpenTofu compatibility
+const TF_BINARY = process.env.TF_BINARY || "terraform";
+
 function hasTerraform17(): boolean {
   try {
-    const version = execSync("terraform version -json", { stdio: "pipe", encoding: "utf-8" });
+    const version = execSync(`${TF_BINARY} version -json`, { stdio: "pipe", encoding: "utf-8" });
     const parsed = JSON.parse(version);
-    const ver = parsed.terraform_version as string;
+    const ver = (parsed.terraform_version || parsed.tofu_version) as string;
     const [major, minor] = ver.split(".").map(Number);
     return major > 1 || (major === 1 && minor >= 7);
   } catch {
@@ -45,7 +48,7 @@ const TF_AVAILABLE = hasTerraform17();
 const E2E_WORK_DIR = join(process.cwd(), "tmp/tests/migrate-e2e");
 
 function terraformCmd(dir: string, cmd: string): string {
-  return execSync(`terraform ${cmd}`, {
+  return execSync(`${TF_BINARY} ${cmd}`, {
     cwd: dir,
     encoding: "utf-8",
     stdio: "pipe",
