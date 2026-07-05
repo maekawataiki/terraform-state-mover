@@ -28,6 +28,19 @@ Also supports **Crossplane** (Kubernetes-native IaC): scans `.yaml` manifests fo
 
 > **Automated fix** = this tool generates the full migration. **Detection only** = flagged in report with guidance, manual refactoring needed.
 
+## Installation
+
+```bash
+# Global install (provides tf-state-mover CLI)
+npm install -g terraform-state-mover
+
+# Or use npx without installing
+npx terraform-state-mover analyze ./my-repos --preset gatekeeper
+
+# Or as a project dependency
+pnpm add terraform-state-mover
+```
+
 ## Quick Start
 
 ```bash

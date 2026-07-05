@@ -58,20 +58,47 @@
     "demo:env-copypasta": "tsx src/cli.ts analyze examples/env-copypasta/prod examples/env-copypasta/stg examples/env-copypasta/dev -o output/env-copypasta",
     "demo:count-antipattern": "tsx src/cli.ts analyze examples/count-antipattern -o output/count-antipattern",
     "demo:depends-on-module": "tsx src/cli.ts analyze examples/depends-on-module -o output/depends-on-module",
-    "demo": "pnpm demo:gatekeeper && pnpm demo:gatekeeper-large && pnpm demo:terralith && pnpm demo:spaghetti && pnpm demo:cross-account && pnpm demo:data-layer && pnpm demo:god-module && pnpm demo:env-copypasta && pnpm demo:count-antipattern && pnpm demo:depends-on-module && echo 'All demos generated in output/'"
+    "changeset": "changeset",
+    "version": "changeset version",
+    "release": "pnpm build && changeset publish",
+    "demo": "pnpm demo:gatekeeper && pnpm demo:gatekeeper-large && pnpm demo:terralith && pnpm demo:spaghetti && pnpm demo:cross-account && pnpm demo:data-layer && pnpm demo:god-module && pnpm demo:env-copypasta && pnpm demo:count-antipattern && pnpm demo:depends-on-module && echo 'All demos generated in output/'",
+    "prepublishOnly": "pnpm lint && pnpm test && pnpm build"
   },
+  "files": [
+    "dist/",
+    "README.md",
+    "LICENSE",
+    "docs/"
+  ],
   "keywords": [
     "terraform",
     "migration",
     "arn",
-    "dependency-graph"
+    "dependency-graph",
+    "iac",
+    "state",
+    "refactoring",
+    "hcl"
   ],
+  "engines": {
+    "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tmae/terraform-state-mover.git"
+  },
+  "homepage": "https://github.com/tmae/terraform-state-mover#readme",
+  "bugs": {
+    "url": "https://github.com/tmae/terraform-state-mover/issues"
+  },
   "license": "MIT",
   "devDependencies": {
+    "@changesets/cli": "^2.31.0",
     "@eslint/js": "^9.28.0",
     "@types/diff": "^8.0.0",
     "@types/node": "22.15.29",
     "eslint": "^9.28.0",
+    "fast-check": "^4.8.0",
     "tsx": "4.19.4",
     "typescript": "5.8.3",
     "typescript-eslint": "^8.34.0",
