@@ -1,0 +1,36 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+    groups:
+      dev-dependencies:
+        patterns:
+          - "@types/*"
+          - "eslint*"
+          - "typescript-eslint"
+          - "vitest"
+          - "tsx"
+          - "fast-check"
+        update-types:
+          - minor
+          - patch
+      production-dependencies:
+        patterns:
+          - "@cdktf/hcl2json"
+          - "commander"
+          - "diff"
+          - "yaml"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    labels:
+      - ci
