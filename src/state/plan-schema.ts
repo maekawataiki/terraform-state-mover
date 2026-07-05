@@ -1,45 +1,45 @@
-import * as z from "zod/v4-mini";
+import { z } from "zod";
 
 /**
  * Zod schemas for validating Terraform plan JSON output (`terraform show -json <plan>`).
  *
- * Uses z.looseObject() per coding guidelines — Terraform versions may add
- * fields that we don't consume, so we must not reject them.
+ * Uses z.object().passthrough() (equivalent to looseObject) — Terraform versions
+ * may add fields that we don't consume, so we must not reject them.
  */
 
-const rootModuleSchema = z.looseObject({
-  resources: z.optional(z.array(z.looseObject({}))),
-  module_calls: z.optional(z.record(z.string(), z.looseObject({}))),
-  child_modules: z.optional(z.array(z.looseObject({}))),
-});
+const rootModuleSchema = z.object({
+  resources: z.array(z.object({}).passthrough()).optional(),
+  module_calls: z.record(z.string(), z.object({}).passthrough()).optional(),
+  child_modules: z.array(z.object({}).passthrough()).optional(),
+}).passthrough();
 
-const configurationSchema = z.looseObject({
-  root_module: z.optional(rootModuleSchema),
-});
+const configurationSchema = z.object({
+  root_module: rootModuleSchema.optional(),
+}).passthrough();
 
-const plannedValuesSchema = z.looseObject({
-  root_module: z.optional(rootModuleSchema),
-});
+const plannedValuesSchema = z.object({
+  root_module: rootModuleSchema.optional(),
+}).passthrough();
 
-const changeSchema = z.looseObject({
-  actions: z.optional(z.array(z.string())),
-  before: z.optional(z.unknown()),
-  after: z.optional(z.unknown()),
-  after_unknown: z.optional(z.unknown()),
-});
+const changeSchema = z.object({
+  actions: z.array(z.string()).optional(),
+  before: z.unknown().optional(),
+  after: z.unknown().optional(),
+  after_unknown: z.unknown().optional(),
+}).passthrough();
 
-const resourceChangeSchema = z.looseObject({
-  address: z.optional(z.string()),
-  mode: z.optional(z.string()),
-  type: z.optional(z.string()),
-  name: z.optional(z.string()),
-  index: z.optional(z.union([z.number(), z.string()])),
-  change: z.optional(changeSchema),
-});
+const resourceChangeSchema = z.object({
+  address: z.string().optional(),
+  mode: z.string().optional(),
+  type: z.string().optional(),
+  name: z.string().optional(),
+  index: z.union([z.number(), z.string()]).optional(),
+  change: changeSchema.optional(),
+}).passthrough();
 
-const variableSchema = z.looseObject({
-  value: z.optional(z.unknown()),
-});
+const variableSchema = z.object({
+  value: z.unknown().optional(),
+}).passthrough();
 
 /**
  * Top-level schema for Terraform plan JSON.
@@ -50,13 +50,13 @@ const variableSchema = z.looseObject({
  * - `resource_changes` is the most reliable section but can be empty
  * - `format_version` is present in all modern outputs but we don't gate on it
  */
-export const terraformPlanSchema = z.looseObject({
-  format_version: z.optional(z.string()),
-  configuration: z.optional(configurationSchema),
-  planned_values: z.optional(plannedValuesSchema),
-  resource_changes: z.optional(z.array(resourceChangeSchema)),
-  variables: z.optional(z.record(z.string(), variableSchema)),
-});
+export const terraformPlanSchema = z.object({
+  format_version: z.string().optional(),
+  configuration: configurationSchema.optional(),
+  planned_values: plannedValuesSchema.optional(),
+  resource_changes: z.array(resourceChangeSchema).optional(),
+  variables: z.record(z.string(), variableSchema).optional(),
+}).passthrough();
 
 export type TerraformPlanJson = z.infer<typeof terraformPlanSchema>;
 
@@ -78,7 +78,7 @@ export function validatePlanJson(data: unknown): TerraformPlanJson {
   const result = terraformPlanSchema.safeParse(data);
   if (!result.success) {
     const issues = result.error.issues
-      .map((issue) => `  - ${issue.path.join(".")}: ${issue.message}`)
+      .map((issue: z.ZodIssue) => `  - ${issue.path.join(".")}: ${issue.message}`)
       .join("\n");
     throw new Error(
       `Invalid Terraform plan JSON format:\n${issues}\n` +
