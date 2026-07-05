@@ -228,6 +228,72 @@ To use per-resource naming (legacy behavior):
 const config: NamespaceConfig = { groupByRepo: false };
 ```
 
+## CI Integration
+
+Use `--json` and `--strict` for CI gate integration:
+
+```bash
+# Fail PR if new cross-namespace dependencies or anti-patterns are introduced
+tf-state-mover analyze ./repos --json --strict
+
+# Parse JSON output in CI scripts
+tf-state-mover analyze ./repos --json | jq '.summary.crossNamespaceEdges'
+
+# Gate: block PRs that increase coupling
+EDGES=$(tf-state-mover analyze ./repos --json | jq '.summary.crossNamespaceEdges')
+if [ "$EDGES" -gt 5 ]; then echo "Too many cross-namespace edges"; exit 1; fi
+```
+
+### Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| `0` | Success. Analysis completed, no issues (or `--strict` not used). |
+| `1` | Failure. With `--strict`: anti-patterns, parser warnings, or unresolved references detected. Without `--strict`: invalid arguments, file not found, or internal error. |
+
+> Without `--strict`, the tool always exits `0` on successful analysis — even if anti-patterns are detected. This is intentional: detection is informational by default, gating is opt-in.
+
+## Detection Guarantees
+
+What this tool can and cannot detect. Transparency about limitations builds trust.
+
+### Accurately Detected (AST-parsed)
+
+| Capability | Condition | Accuracy |
+|---|---|---|
+| Resource blocks & data sources | Standard HCL syntax | ✅ High |
+| Hardcoded ARN references | String literals in resource bodies | ✅ High |
+| `terraform_remote_state` dependencies | Data source references | ✅ High |
+| Cross-repo resource references | `resource.name.attr` pattern | ✅ High |
+| `count = length(...)` anti-pattern | Body text match | ✅ High |
+| `depends_on` on modules | Body text match | ✅ High |
+| Provider alias / multi-account | `assume_role` in provider blocks | ✅ High |
+
+### Detected with Caveats (regex fallback)
+
+| Capability | Condition | Accuracy |
+|---|---|---|
+| ARNs in `templatefile()` calls | Parser emits warning, ARN may be missed | ⚠️ Medium |
+| ARNs in heredocs | Skipped by default to avoid false positives | ⚠️ Low |
+| Dynamic block contents | Body parsed but inner blocks not fully expanded | ⚠️ Medium |
+| `for_each` map keys | Static keys detected, dynamic keys produce `unresolvedRef` | ⚠️ Medium |
+
+### Not Detected (known limitations)
+
+| Limitation | Reason | Mitigation |
+|---|---|---|
+| SSM Parameter / Secrets Manager lookups | Resolved at runtime, no static trace | Use `--plan-dir` with `terraform show -json` |
+| Inter-module references within a repo | Module composition is not expanded | Treated as one namespace (by-repo grouping) |
+| `local.*` values that construct ARNs | Locals are not evaluated | Parser emits `unresolvedRef` warning |
+| Resources in `.tf.json` format | Only `.tf` (HCL) is scanned | Convert to HCL or use plan-dir |
+| Conditional resources (`count = var.enabled ? 1 : 0`) | Cannot determine if resource exists | Always included in graph |
+
+### Precision Indicators in Output
+
+- **`unresolvedReferences`** in `--json` output: count of dependencies that could not be statically traced. Higher = less complete picture.
+- **`parserWarnings`** in `--json` output: count of files where regex fallback was used instead of AST. Higher = reduced precision for those files.
+- **`<RESOURCE_ID>` in import blocks**: state files not provided; resource IDs cannot be resolved.
+
 ## Architecture
 
 ```
