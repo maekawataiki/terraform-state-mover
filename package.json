@@ -88,16 +88,16 @@
     "@types/diff": "^8.0.0",
     "@types/node": "22.15.29",
     "@vitest/coverage-v8": "3.2.3",
-    "eslint": "^9.28.0",
+    "eslint": "^10.6.0",
     "fast-check": "^4.8.0",
-    "tsx": "4.19.4",
-    "typescript": "5.8.3",
+    "tsx": "4.23.0",
+    "typescript": "6.0.3",
     "typescript-eslint": "^8.34.0",
     "vitest": "3.2.3"
   },
   "dependencies": {
     "@cdktf/hcl2json": "^0.21.0",
-    "commander": "13.1.0",
+    "commander": "15.0.0",
     "diff": "^9.0.0",
     "yaml": "^2.9.0",
     "zod": "3.25.36"

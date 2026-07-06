@@ -5,7 +5,7 @@ import type { TerraformBlock, ParsedFile, ParseWarning, UnresolvedReference } fr
 import { ARN_PATTERN_SIMPLE } from "../analyzer/arn-detector.js";
 import { CliError } from "../utils/error.js";
 
-const STRING_LITERAL_PATTERN = /"([^"\\]*(\\.[^"\\]*)*)"/g;
+const STRING_LITERAL_PATTERN = /"((?:[^"\\]|\\.)*)"/g;
 // `locals` takes no labels; the other block types take one or two quoted labels.
 const BLOCK_PATTERN = /^(?:(resource|data|variable|module)\s+"([^"]*)"(?:\s+"([^"]*)")?|(locals))\s*\{/gm;
 
@@ -256,7 +256,7 @@ export function extractUnresolvedRefs(strings: string[]): UnresolvedReference[] 
       if (seen.has(expr)) continue;
 
       // Dynamic indexing: something[expression] where expression is not a literal
-      if (/\[[^\]]*[a-z_]+\.[a-z_]+[^\]]*\]/.test(expr)) {
+      if (/\[[^\]]{0,200}[a-z_]+\.[a-z_]+[^\]]{0,200}\]/.test(expr)) {
         seen.add(expr);
         refs.push({ expression: expr, reason: "dynamic_index" });
         continue;
@@ -270,7 +270,7 @@ export function extractUnresolvedRefs(strings: string[]): UnresolvedReference[] 
       }
 
       // Conditional expressions: cond ? a : b
-      if (/\?.*:/.test(expr)) {
+      if (/\?[^:]*:/.test(expr)) {
         seen.add(expr);
         refs.push({ expression: expr, reason: "conditional" });
         continue;
@@ -493,7 +493,7 @@ export function detectParserLimitations(content: string, filePath: string): Pars
     }
 
     // Interpolated ARNs — cannot be statically resolved or rewritten
-    if (/arn:(?:aws|aws-cn|aws-us-gov):[^"]*\$\{/.test(line) || /\$\{[^}]*arn:(?:aws|aws-cn|aws-us-gov):/.test(line)) {
+    if (/arn:(?:aws|aws-cn|aws-us-gov):[^"]{0,500}\$\{/.test(line) || /\$\{[^}]{0,500}arn:(?:aws|aws-cn|aws-us-gov):/.test(line)) {
       warnings.push({
         filePath,
         line: lineNum,

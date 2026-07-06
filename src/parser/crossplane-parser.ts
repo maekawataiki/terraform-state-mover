@@ -25,9 +25,9 @@ export function parseCrossplaneYaml(content: string, filePath: string, repo: str
   for (const doc of documents) {
     if (!doc.trim()) continue;
 
-    const apiVersionMatch = doc.match(/apiVersion:\s*(.+)/);
-    const kindMatch = doc.match(/kind:\s*(.+)/);
-    const nameMatch = doc.match(/metadata:\s*\n\s+name:\s*(.+)/);
+    const apiVersionMatch = doc.match(/apiVersion:\s*([^\n]+)/);
+    const kindMatch = doc.match(/kind:\s*([^\n]+)/);
+    const nameMatch = doc.match(/metadata:\s*\n\s+name:\s*([^\n]+)/);
     if (!kindMatch) continue;
 
     const kind = kindMatch[1].trim();
@@ -45,7 +45,7 @@ export function parseCrossplaneYaml(content: string, filePath: string, repo: str
     }
 
     // Extract resourceRef names
-    const resourceRefMatches = doc.matchAll(/resourceRef:\s*\n\s+name:\s*(.+)/g);
+    const resourceRefMatches = doc.matchAll(/resourceRef:\s*\n\s+name:\s*([^\n]+)/g);
     for (const m of resourceRefMatches) {
       stringLiterals.push(m[1].trim());
     }

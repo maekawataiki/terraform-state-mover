@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { execSync } from "node:child_process";
+import { execSync, execFileSync } from "node:child_process";
 import { join } from "node:path";
+import { mkdirSync } from "node:fs";
 import { mkdir, writeFile, rm, access } from "node:fs/promises";
 import { parsePlanJson, buildGraphFromPlan, extractResourceIds, enrichGraphWithPlan } from "../../src/state/plan-parser.js";
 import { scanDirectory } from "../../src/parser/hcl-parser.js";
@@ -11,7 +12,7 @@ const TF_BINARY = process.env.TF_BINARY || "terraform";
 
 function hasTerraform(): boolean {
   try {
-    execSync(`${TF_BINARY} version`, { stdio: "pipe" });
+    execFileSync(TF_BINARY, ["version"], { stdio: "pipe" });
     return true;
   } catch {
     return false;
@@ -29,10 +30,10 @@ function generatePlanJson(dir: string): string | null {
   };
 
   try {
-    execSync(`mkdir -p ${env.TF_PLUGIN_CACHE_DIR}`, { stdio: "pipe" });
-    execSync(`${TF_BINARY} init -backend=false -input=false`, { cwd: dir, stdio: "pipe", env });
-    execSync(`${TF_BINARY} plan -out=plan.bin -input=false -refresh=false`, { cwd: dir, stdio: "pipe", env });
-    const planJson = execSync(`${TF_BINARY} show -json plan.bin`, { cwd: dir, encoding: "utf-8", env });
+    mkdirSync(env.TF_PLUGIN_CACHE_DIR, { recursive: true });
+    execFileSync(TF_BINARY, ["init", "-backend=false", "-input=false"], { cwd: dir, stdio: "pipe", env });
+    execFileSync(TF_BINARY, ["plan", "-out=plan.bin", "-input=false", "-refresh=false"], { cwd: dir, stdio: "pipe", env });
+    const planJson = execFileSync(TF_BINARY, ["show", "-json", "plan.bin"], { cwd: dir, encoding: "utf-8", env });
     execSync("rm -f plan.bin", { cwd: dir, stdio: "pipe" });
     return planJson;
   } catch {
