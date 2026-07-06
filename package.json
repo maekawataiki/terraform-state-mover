@@ -84,7 +84,7 @@
     "@changesets/cli": "^2.31.0",
     "@eslint/js": "^9.28.0",
     "@types/diff": "^8.0.0",
-    "@types/node": "22.15.29",
+    "@types/node": "26.1.0",
     "@vitest/coverage-v8": "3.2.3",
     "eslint": "^10.6.0",
     "fast-check": "^4.8.0",
