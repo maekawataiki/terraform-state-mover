@@ -14,7 +14,7 @@
  *
  * Output: dist/bin/tf-state-mover-{platform}-{arch}
  */
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 
@@ -34,10 +34,10 @@ function buildForTarget(target) {
   console.log(`Building: ${target.platform}-${target.arch} → ${outPath}`);
 
   try {
-    execSync(
-      `bun build ${ENTRY} --compile --target=${target.bunTarget} --outfile=${outPath}`,
-      { stdio: "inherit", cwd: process.cwd() },
-    );
+    execFileSync("bun", ["build", ENTRY, "--compile", `--target=${target.bunTarget}`, `--outfile=${outPath}`], {
+      stdio: "inherit",
+      cwd: process.cwd(),
+    });
     console.log(`  ✓ ${outPath}`);
     return true;
   } catch (err) {

@@ -1,14 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import type { AnalyzeJsonOutput } from "./analyze.js";
 
-const CLI = "tsx src/cli.ts";
 const GATEKEEPER_ARGS = "analyze examples/gatekeeper/infra-central examples/gatekeeper/service-app-api examples/gatekeeper/service-app-analytics examples/gatekeeper/infra-platform --preset gatekeeper --state-dir examples/gatekeeper/state";
 
 function runCli(args: string): { stdout: string; stderr: string; exitCode: number } {
   try {
-    const stdout = execSync(`${CLI} ${args}`, {
+    const stdout = execFileSync("tsx", ["src/cli.ts", ...args.split(/\s+/)], {
       cwd: process.cwd(),
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "pipe"],

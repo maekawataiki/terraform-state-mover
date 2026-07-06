@@ -13,9 +13,14 @@ export function sanitizeTfIdentifier(raw: string): string {
   let result = raw.replace(/[^a-zA-Z0-9_]/g, "_");
   // Collapse consecutive underscores
   result = result.replace(/_+/g, "_");
-  // Strip leading/trailing underscores
-  result = result.replace(/^_+/, "");
-  result = result.replace(/_+$/, "");
+  // Strip leading underscores (linear scan, avoids ReDoS-flagged regex)
+  let startIdx = 0;
+  while (startIdx < result.length && result[startIdx] === "_") startIdx++;
+  result = result.slice(startIdx);
+  // Strip trailing underscores (linear scan)
+  let endIdx = result.length;
+  while (endIdx > 0 && result[endIdx - 1] === "_") endIdx--;
+  result = result.slice(0, endIdx);
   // If it starts with a digit, prefix with underscore
   if (/^[0-9]/.test(result)) {
     result = `_${result}`;

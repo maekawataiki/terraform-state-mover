@@ -1,15 +1,14 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { existsSync, rmSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-const CLI = "tsx src/cli.ts";
 const GATEKEEPER_DIRS = "examples/gatekeeper/infra-central examples/gatekeeper/service-app-api examples/gatekeeper/service-app-analytics";
 const OUTPUT_DIR = join(process.cwd(), "tmp/tests/visualize-cmd-test");
 
 function runCli(args: string): { stdout: string; stderr: string; exitCode: number } {
   try {
-    const stdout = execSync(`${CLI} ${args}`, {
+    const stdout = execFileSync("tsx", ["src/cli.ts", ...args.split(/\s+/)], {
       cwd: process.cwd(),
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "pipe"],

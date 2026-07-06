@@ -25,9 +25,9 @@ export function parseCrossplaneYaml(content: string, filePath: string, repo: str
   for (const doc of documents) {
     if (!doc.trim()) continue;
 
-    const apiVersionMatch = doc.match(/apiVersion:\s*([^\n]+)/);
-    const kindMatch = doc.match(/kind:\s*([^\n]+)/);
-    const nameMatch = doc.match(/metadata:\s*\n\s+name:\s*([^\n]+)/);
+    const apiVersionMatch = doc.match(/apiVersion:[ \t]*([^\n]+)/);
+    const kindMatch = doc.match(/kind:[ \t]*([^\n]+)/);
+    const nameMatch = doc.match(/metadata:[ \t]*\n[ \t]+name:[ \t]*([^\n]+)/);
     if (!kindMatch) continue;
 
     const kind = kindMatch[1].trim();
@@ -38,14 +38,14 @@ export function parseCrossplaneYaml(content: string, filePath: string, repo: str
     const stringLiterals: string[] = [];
 
     // Extract forProvider fields with values
-    const forProviderLines = doc.match(/^\s+\w+(?:Arn|Id|Ref|Name):\s*.+$/gm) || [];
+    const forProviderLines = doc.match(/^[ \t]+\w+(?:Arn|Id|Ref|Name):[ \t]*[^\n]+$/gm) || [];
     for (const line of forProviderLines) {
       const val = line.split(":").slice(1).join(":").trim();
       if (val) stringLiterals.push(val);
     }
 
     // Extract resourceRef names
-    const resourceRefMatches = doc.matchAll(/resourceRef:\s*\n\s+name:\s*([^\n]+)/g);
+    const resourceRefMatches = doc.matchAll(/resourceRef: *\n +name: *([^\n]+)/g);
     for (const m of resourceRefMatches) {
       stringLiterals.push(m[1].trim());
     }

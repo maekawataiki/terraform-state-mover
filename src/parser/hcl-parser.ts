@@ -5,7 +5,7 @@ import type { TerraformBlock, ParsedFile, ParseWarning, UnresolvedReference } fr
 import { ARN_PATTERN_SIMPLE } from "../analyzer/arn-detector.js";
 import { CliError } from "../utils/error.js";
 
-const STRING_LITERAL_PATTERN = /"((?:[^"\\]|\\.)*)"/g;
+const STRING_LITERAL_PATTERN = /"((?:[^"\\]|\\.){0,10000})"/g;
 // `locals` takes no labels; the other block types take one or two quoted labels.
 const BLOCK_PATTERN = /^(?:(resource|data|variable|module)\s+"([^"]*)"(?:\s+"([^"]*)")?|(locals))\s*\{/gm;
 
@@ -255,8 +255,9 @@ export function extractUnresolvedRefs(strings: string[]): UnresolvedReference[] 
       const expr = match[1].trim();
       if (seen.has(expr)) continue;
 
-      // Dynamic indexing: something[expression] where expression is not a literal
-      if (/\[[^\]]{0,200}[a-z_]+\.[a-z_]+[^\]]{0,200}\]/.test(expr)) {
+      // Dynamic indexing: something[expression] where expression contains a dotted reference
+      const bracketMatch = expr.match(/\[([^\]]{1,200})\]/);
+      if (bracketMatch && /[a-z_]+\.[a-z_]+/.test(bracketMatch[1])) {
         seen.add(expr);
         refs.push({ expression: expr, reason: "dynamic_index" });
         continue;
@@ -270,7 +271,7 @@ export function extractUnresolvedRefs(strings: string[]): UnresolvedReference[] 
       }
 
       // Conditional expressions: cond ? a : b
-      if (/\?[^:]*:/.test(expr)) {
+      if (/\?[^:]{0,500}:/.test(expr)) {
         seen.add(expr);
         refs.push({ expression: expr, reason: "conditional" });
         continue;
