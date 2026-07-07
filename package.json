@@ -48,11 +48,9 @@
     "demo:crossplane": "tsx src/cli.ts analyze examples/crossplane/infra-central examples/crossplane/crossplane-config --include-crossplane --preset gatekeeper --state-dir examples/crossplane/state -o output/crossplane",
     "changeset": "changeset",
     "version": "changeset version",
-    "release": "pnpm build && changeset publish",
     "demo": "pnpm demo:gatekeeper && pnpm demo:gatekeeper-large && pnpm demo:terralith && pnpm demo:spaghetti && pnpm demo:cross-account && pnpm demo:data-layer && pnpm demo:god-module && pnpm demo:env-copypasta && pnpm demo:count-antipattern && pnpm demo:depends-on-module && pnpm demo:crossplane && echo 'All demos generated in output/'",
     "build:binary": "bun run scripts/build-binary.mjs",
-    "build:binary:all": "bun run scripts/build-binary.mjs --all",
-    "prepublishOnly": "pnpm lint && pnpm test && pnpm build"
+    "build:binary:all": "bun run scripts/build-binary.mjs --all"
   },
   "files": [
     "dist/",
@@ -88,16 +86,16 @@
     "@types/diff": "^8.0.0",
     "@types/node": "22.15.29",
     "@vitest/coverage-v8": "3.2.3",
-    "eslint": "^9.28.0",
+    "eslint": "^10.6.0",
     "fast-check": "^4.8.0",
-    "tsx": "4.19.4",
-    "typescript": "5.8.3",
+    "tsx": "4.23.0",
+    "typescript": "6.0.3",
     "typescript-eslint": "^8.34.0",
     "vitest": "3.2.3"
   },
   "dependencies": {
     "@cdktf/hcl2json": "^0.21.0",
-    "commander": "13.1.0",
+    "commander": "15.0.0",
     "diff": "^9.0.0",
     "yaml": "^2.9.0",
     "zod": "3.25.36"

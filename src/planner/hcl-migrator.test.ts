@@ -595,8 +595,10 @@ describe("hcl-migrator", () => {
             operation: "create" as const,
           },
           {
-            // Write to an impossible path to trigger failure during rename
-            filePath: join("/dev/null/impossible/path.tf"),
+            // Write to a path under a regular file (not directory) to trigger failure.
+            // /proc/version is a file on Linux, /dev/null is a device on all UNIX — 
+            // neither can have children, so mkdir for subdirectories always fails.
+            filePath: join(existingFile, "subdir", "impossible.tf"),
             content: "will fail\n",
             operation: "create" as const,
           },
@@ -620,6 +622,10 @@ describe("hcl-migrator", () => {
       const dir = join(testDir, "temp-cleanup");
       await mkdir(dir, { recursive: true });
 
+      // Create a regular file that will block mkdir when we try to create a subdirectory under it
+      const blockerFile = join(dir, "blocker");
+      await writeFile(blockerFile, "I am a file, not a directory");
+
       const result = {
         moves: [],
         variableDeclarations: [],
@@ -634,8 +640,8 @@ describe("hcl-migrator", () => {
             operation: "create" as const,
           },
           {
-            // This will fail because the parent dir is /dev/null which can't have children
-            filePath: join("/dev/null/sub/dir/bad.tf"),
+            // This will fail because 'blocker' is a file, not a directory — mkdir fails with ENOTDIR
+            filePath: join(blockerFile, "subdir", "bad.tf"),
             content: "bad content\n",
             operation: "create" as const,
           },

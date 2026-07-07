@@ -13,7 +13,7 @@
  * Output: JSON with benchmark results to stdout.
  * Exit code 1 if duration exceeds threshold or baseline regression detected.
  */
-import { execSync } from "node:child_process";
+import { execSync, execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { readdirSync } from "node:fs";
@@ -59,7 +59,7 @@ console.error(`Command: ${args.join(" ")}`);
 const startTime = performance.now();
 
 try {
-  execSync(args.join(" "), {
+  execFileSync(args[0], args.slice(1), {
     cwd: process.cwd(),
     stdio: ["pipe", "pipe", "pipe"],
     env: { ...process.env, NODE_ENV: "production" },
