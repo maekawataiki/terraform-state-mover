@@ -249,15 +249,18 @@ export function extractUnresolvedRefs(strings: string[]): UnresolvedReference[] 
     if (!s.startsWith("${") && !s.includes("${")) continue;
 
     // Extract all interpolation expressions from the string
-    const exprPattern = /\$\{([^}]+)\}/g;
+    // Use [^}]+ which cannot backtrack (single char class, mutually exclusive with })
+    // Length-limit input to prevent slow scans on very large strings
+    const bounded = s.length > 10_000 ? s.slice(0, 10_000) : s;
+    const exprPattern = /\$\{([^}]{1,1000})\}/g;
     let match: RegExpExecArray | null;
-    while ((match = exprPattern.exec(s)) !== null) {
+    while ((match = exprPattern.exec(bounded)) !== null) {
       const expr = match[1].trim();
       if (seen.has(expr)) continue;
 
       // Dynamic indexing: something[expression] where expression contains a dotted reference
       const bracketMatch = expr.match(/\[([^\]]{1,200})\]/);
-      if (bracketMatch && /[a-z_]+\.[a-z_]+/.test(bracketMatch[1])) {
+      if (bracketMatch && /[a-z_]{1,100}\.[a-z_]{1,100}/.test(bracketMatch[1])) {
         seen.add(expr);
         refs.push({ expression: expr, reason: "dynamic_index" });
         continue;

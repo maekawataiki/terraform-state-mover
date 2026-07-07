@@ -134,7 +134,7 @@ export function parsePlanJson(json: string): ParsedPlan {
   try {
     rawPlan = JSON.parse(json);
   } catch (error: unknown) {
-    throw new Error(`Failed to parse Terraform plan JSON: ${formatError(error)}`);
+    throw new Error(`Failed to parse Terraform plan JSON: ${formatError(error)}`, { cause: error });
   }
 
   const plan = validatePlanJson(rawPlan);

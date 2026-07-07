@@ -243,15 +243,14 @@ export async function planBlockMoves(input: BlockMoveInput): Promise<BlockMoveRe
     if (!content) continue;
 
     // Step 1: Confirm block exists via AST (catches edge cases regex misses)
-    let blockExists = false;
+    let blockExists = true;
     try {
       const astBlocks = await parseHclAst(content, move.sourceFilePath, move.sourceRepo);
       blockExists = astBlocks.some(
         (b) => b.type === move.block.type && b.resourceType === move.block.resourceType && b.name === move.block.name,
       );
     } catch {
-      // AST parser failed — skip confirmation, try regex directly
-      blockExists = true;
+      // AST parser failed — skip confirmation, try regex directly (blockExists stays true)
     }
 
     if (!blockExists) {

@@ -38,7 +38,8 @@ export function parseCrossplaneYaml(content: string, filePath: string, repo: str
     const stringLiterals: string[] = [];
 
     // Extract forProvider fields with values
-    const forProviderLines = doc.match(/^[ \t]+\w+(?:Arn|Id|Ref|Name):[ \t]*[^\n]+$/gm) || [];
+    // Use \S[^\n]* instead of [ \t]*[^\n]+$ to avoid overlapping quantifiers (ReDoS)
+    const forProviderLines = doc.match(/^[ \t]+\w+(?:Arn|Id|Ref|Name):[ \t]*\S[^\n]*$/gm) || [];
     for (const line of forProviderLines) {
       const val = line.split(":").slice(1).join(":").trim();
       if (val) stringLiterals.push(val);
