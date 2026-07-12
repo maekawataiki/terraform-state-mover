@@ -135,7 +135,7 @@ jobs:
           cache: pnpm
       - name: Setup Terraform
         if: ${{ !matrix.tofu }}
-        uses: hashicorp/setup-terraform@v3
+        uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: ${{ matrix.terraform.version }}
       - name: Setup OpenTofu
