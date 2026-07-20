@@ -81,7 +81,7 @@
   },
   "license": "MIT",
   "devDependencies": {
-    "@changesets/cli": "^2.31.0",
+    "@changesets/cli": "^2.31.1",
     "@eslint/js": "^10.0.1",
     "@types/diff": "^8.0.0",
     "@types/node": "26.1.0",
